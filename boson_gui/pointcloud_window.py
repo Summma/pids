@@ -38,7 +38,7 @@ except Exception:
     gl = None
     HAS_PG = False
 
-from clustering import Cluster, ClusterParams, Tracker, cluster_xyz, HAS_SKLEARN
+from clustering import Cluster, ClusterParams, ClusterWorker, HAS_SKLEARN
 from fusion import (
     LENS_PRESETS,
     Extrinsics,
@@ -151,12 +151,14 @@ class PointCloudWindow(QWidget):
 
         self.thermal_provider = thermal_provider  # callable -> latest BGR thermal frame
         self.cluster_params = ClusterParams()
-        self.tracker = Tracker(max_distance=1.5, max_age=5)
         self.last_clusters: list[Cluster] = []
         self.last_xyz: Optional[np.ndarray] = None
         self.last_frame: Optional[LidarFrame] = None
-        self.last_t = time.monotonic()
+        self.last_cluster_ms: float = 0.0
         self.selected_track_id: Optional[int] = None
+
+        # Background DBSCAN worker (started lazily when clustering is enabled)
+        self.worker: Optional[ClusterWorker] = None
 
         self.intr = ThermalIntrinsics()
         self.extr = Extrinsics()
@@ -238,7 +240,7 @@ class PointCloudWindow(QWidget):
         # Clustering
         self.cluster_check = QCheckBox("Enable DBSCAN")
         self.cluster_check.setChecked(False)
-        self.cluster_check.toggled.connect(self._redraw)
+        self.cluster_check.toggled.connect(self._on_cluster_toggle)
 
         self.eps_spin = QDoubleSpinBox()
         self.eps_spin.setRange(0.05, 5.0)
@@ -331,6 +333,21 @@ class PointCloudWindow(QWidget):
         self.cluster_params.min_samples = self.minpts_spin.value()
         self.cluster_params.z_min = self.zmin_spin.value()
         self.cluster_params.z_max = self.zmax_spin.value()
+        if self.worker is not None:
+            self.worker.update_params(self.cluster_params)
+        self._redraw()
+
+    def _on_cluster_toggle(self, on: bool) -> None:
+        if on and HAS_SKLEARN:
+            if self.worker is None:
+                self.worker = ClusterWorker(self.cluster_params)
+                self.worker.result.connect(self._on_clusters_ready)
+                self.worker.start()
+        else:
+            if self.worker is not None:
+                self.worker.stop()
+                self.worker = None
+            self.last_clusters = []
         self._redraw()
 
     def _on_extr_change(self) -> None:
@@ -346,6 +363,23 @@ class PointCloudWindow(QWidget):
     def _on_lens_change(self, name: str) -> None:
         hfov = LENS_PRESETS[name]
         self.intr = intrinsics_from_hfov(self.intr.width, self.intr.height, hfov)
+        if self.color_combo.currentText() == "thermal":
+            self._redraw()
+
+    def set_calibration(self, extr: Extrinsics, intr: ThermalIntrinsics) -> None:
+        """Apply calibration from outside (e.g. CalibrationWindow). Updates
+        widget values silently and re-renders if in thermal mode."""
+        self.extr = Extrinsics(**extr.__dict__)
+        self.intr = ThermalIntrinsics(**intr.__dict__)
+        for w, v in [
+            (self.tx_spin, self.extr.tx), (self.ty_spin, self.extr.ty), (self.tz_spin, self.extr.tz),
+            (self.roll_spin, self.extr.roll_deg),
+            (self.pitch_spin, self.extr.pitch_deg),
+            (self.yaw_spin, self.extr.yaw_deg),
+        ]:
+            w.blockSignals(True)
+            w.setValue(v)
+            w.blockSignals(False)
         if self.color_combo.currentText() == "thermal":
             self._redraw()
 
@@ -384,15 +418,16 @@ class PointCloudWindow(QWidget):
         self.last_xyz_mask = mask
         self.last_ranges = rng[mask]
 
-        if self.cluster_check.isChecked() and HAS_SKLEARN:
-            now = time.monotonic()
-            dt = max(now - self.last_t, 1e-3)
-            self.last_t = now
-            raw = cluster_xyz(frame.xyz, self.cluster_params)
-            self.last_clusters = self.tracker.update(raw, dt)
-        else:
-            self.last_clusters = []
+        # Hand the raw frame XYZ to the worker (latest-only queue); rendering
+        # uses whatever clusters arrived from the worker most recently.
+        if self.cluster_check.isChecked() and HAS_SKLEARN and self.worker is not None:
+            self.worker.submit(frame.xyz)
 
+        self._redraw()
+
+    def _on_clusters_ready(self, clusters: list, elapsed_ms: float) -> None:
+        self.last_clusters = clusters
+        self.last_cluster_ms = elapsed_ms
         self._redraw()
 
     def _redraw(self) -> None:
@@ -411,10 +446,13 @@ class PointCloudWindow(QWidget):
         self.view.set_picking(cents)
         # Status
         n_clusters = len(self.last_clusters)
-        self.status_lbl.setText(
-            f"{len(self.last_xyz):,} pts  |  {n_clusters} clusters"
-            + ("  |  sklearn missing" if self.cluster_check.isChecked() and not HAS_SKLEARN else "")
-        )
+        parts = [f"{len(self.last_xyz):,} pts", f"{n_clusters} clusters"]
+        if self.cluster_check.isChecked():
+            if not HAS_SKLEARN:
+                parts.append("sklearn missing")
+            elif self.last_cluster_ms > 0:
+                parts.append(f"DBSCAN {self.last_cluster_ms:.0f}ms")
+        self.status_lbl.setText("  |  ".join(parts))
 
     def _compute_colors(self) -> np.ndarray:
         mode = self.color_combo.currentText()
@@ -492,6 +530,12 @@ class PointCloudWindow(QWidget):
             )
             self.view.addItem(line)
             self.box_items.append(line)
+
+    def closeEvent(self, ev) -> None:
+        if self.worker is not None:
+            self.worker.stop()
+            self.worker = None
+        super().closeEvent(ev)
 
     @staticmethod
     def _bbox_lines(mn: np.ndarray, mx: np.ndarray) -> np.ndarray:

@@ -34,6 +34,7 @@ class LidarFrame:
     reflectivity_img: Optional[np.ndarray]
     nearir_img: Optional[np.ndarray]
     xyz: Optional[np.ndarray]  # (H, W, 3) in meters
+    beam_altitudes: Optional[np.ndarray] = None  # (H,) per-row altitude in degrees
 
     def channel(self, name: str) -> Optional[np.ndarray]:
         return {
@@ -76,6 +77,10 @@ class OusterThread(QThread):
             sn = getattr(meta, "sn", "?")
             self.info.emit(f"{prod} sn={sn}")
             xyz_lut = XYZLut(meta)
+            beam_alts = getattr(getattr(meta, "beam_intrinsics", None),
+                                "beam_altitude_angles", None)
+            if beam_alts is not None:
+                beam_alts = np.asarray(beam_alts, dtype=np.float32)
         except Exception as e:
             self.error.emit(f"metadata error: {e}")
             return
@@ -92,7 +97,9 @@ class OusterThread(QThread):
                 scan = next((s for s in scan_set if s is not None), None)
                 if scan is None:
                     continue
-                self.frame_ready.emit(self._extract(scan, xyz_lut))
+                frame = self._extract(scan, xyz_lut)
+                frame.beam_altitudes = beam_alts
+                self.frame_ready.emit(frame)
         except Exception as e:
             if self._running:
                 self.error.emit(f"stream error: {e}")

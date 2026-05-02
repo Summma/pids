@@ -1,11 +1,20 @@
-"""DBSCAN clustering of a lidar point cloud + greedy track association."""
+"""DBSCAN clustering of a lidar point cloud + greedy track association.
+
+Includes a `ClusterWorker` QThread that runs DBSCAN off the GUI thread so the
+viewer stays responsive at the lidar's full frame rate. The worker holds at
+most one pending scan and drops older ones — clustering output rate is
+whatever the worker can sustain (typically 5–10 Hz with voxel downsampling).
+"""
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import Optional
 
 import numpy as np
+from PySide6.QtCore import QThread, Signal
 
 try:
     from sklearn.cluster import DBSCAN
@@ -49,8 +58,25 @@ class ClusterParams:
     z_min: float = -1.0      # ground filter (m, lidar frame: Z up)
     z_max: float = 3.0
     range_min: float = 1.0   # ignore points too close (sensor housing)
-    range_max: float = 50.0
-    max_points: int = 30000  # subsample cap for DBSCAN speed
+    range_max: float = 30.0
+    voxel_size: float = 0.10  # m; 0 disables voxel downsampling
+    max_points: int = 8000   # hard cap after voxel downsample
+
+
+def voxel_downsample(pts: np.ndarray, voxel: float) -> np.ndarray:
+    """Keep one representative point per occupied voxel (its centroid)."""
+    if voxel <= 0 or len(pts) == 0:
+        return pts
+    keys = np.floor(pts / voxel).astype(np.int64)
+    # Pack 3 ints into one for unique
+    k = keys[:, 0] * 73856093 ^ keys[:, 1] * 19349663 ^ keys[:, 2] * 83492791
+    _, inv = np.unique(k, return_inverse=True)
+    n = inv.max() + 1
+    sums = np.zeros((n, 3), dtype=np.float64)
+    counts = np.zeros(n, dtype=np.int64)
+    np.add.at(sums, inv, pts)
+    np.add.at(counts, inv, 1)
+    return (sums / counts[:, None]).astype(np.float32)
 
 
 def cluster_xyz(xyz: np.ndarray, params: ClusterParams) -> list[Cluster]:
@@ -68,11 +94,16 @@ def cluster_xyz(xyz: np.ndarray, params: ClusterParams) -> list[Cluster]:
     pts = pts[keep]
     if len(pts) < params.min_samples:
         return []
+
+    pts = voxel_downsample(pts, params.voxel_size)
     if len(pts) > params.max_points:
         idx = np.random.default_rng(0).choice(len(pts), params.max_points, replace=False)
         pts = pts[idx]
 
-    labels = DBSCAN(eps=params.eps, min_samples=params.min_samples, n_jobs=-1).fit_predict(pts)
+    labels = DBSCAN(
+        eps=params.eps, min_samples=params.min_samples,
+        algorithm="kd_tree", n_jobs=-1,
+    ).fit_predict(pts)
     clusters: list[Cluster] = []
     for cid in np.unique(labels):
         if cid == -1:  # noise
@@ -169,3 +200,52 @@ class Tracker:
                 self.miss_count.pop(tid, None)
 
         return list(raw)
+
+
+class ClusterWorker(QThread):
+    """Background DBSCAN worker.
+
+    Caller pushes the latest XYZ via `submit(xyz)`; the worker keeps only the
+    most recent submission and drops anything that piled up while it was busy.
+    Emits `result(clusters, dt_ms)` after each cluster pass.
+    """
+
+    result = Signal(object, float)  # (list[Cluster], elapsed_ms)
+
+    def __init__(self, params: ClusterParams, parent=None) -> None:
+        super().__init__(parent)
+        self.params = params
+        self.tracker = Tracker(max_distance=1.5, max_age=5)
+        self._lock = Lock()
+        self._pending: Optional[np.ndarray] = None
+        self._running = False
+        self._last_scan_t = time.monotonic()
+
+    def submit(self, xyz: np.ndarray) -> None:
+        with self._lock:
+            self._pending = xyz  # newest wins; older drops on the floor
+
+    def update_params(self, params: ClusterParams) -> None:
+        self.params = params
+
+    def stop(self) -> None:
+        self._running = False
+        self.wait(2000)
+
+    def run(self) -> None:
+        self._running = True
+        while self._running:
+            with self._lock:
+                xyz = self._pending
+                self._pending = None
+            if xyz is None:
+                self.msleep(15)
+                continue
+            t0 = time.monotonic()
+            raw = cluster_xyz(xyz, self.params)
+            now = time.monotonic()
+            dt = now - self._last_scan_t
+            self._last_scan_t = now
+            tracked = self.tracker.update(raw, dt)
+            elapsed_ms = (now - t0) * 1000.0
+            self.result.emit(tracked, elapsed_ms)

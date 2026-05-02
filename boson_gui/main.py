@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from calibration_window import CalibrationWindow, load_calibration
 from camera import (
     BosonControl,
     CameraThread,
@@ -41,8 +42,10 @@ from camera import (
     list_video_devices,
     y16_to_celsius,
 )
+from fusion import Extrinsics, ThermalIntrinsics
 from lidar import CHANNELS, LidarFrame, OusterThread
 from pointcloud_window import PointCloudWindow
+from rf_window import RFWindow
 from viewer import Viewer2D
 
 
@@ -252,18 +255,32 @@ class LidarPanel(QWidget):
         cl.addWidget(self.connect_btn)
         conn_box.setLayout(cl)
 
-        # Channel selector + 3D button
+        # Channel selector + 3D button + calibration button
         self.channel_combo = QComboBox()
         self.channel_combo.addItems(CHANNELS)
         self.channel_combo.setCurrentText("range")
         self.channel_combo.currentTextChanged.connect(self._redraw)
         self.cloud_btn = QPushButton("Open 3D View")
         self.cloud_btn.clicked.connect(self._open_cloud)
+        self.calib_btn = QPushButton("Open Calibration")
+        self.calib_btn.clicked.connect(self._open_calibration)
+        self.rf_btn = QPushButton("Open RF Spectrum")
+        self.rf_btn.clicked.connect(self._open_rf)
+        self.cal_window: Optional[CalibrationWindow] = None
+        self.rf_window: Optional[RFWindow] = None
+        # Persistent calibration state shared between windows
+        self.extr = Extrinsics()
+        self.intr = ThermalIntrinsics()
+        loaded = load_calibration()
+        if loaded is not None:
+            self.extr, self.intr = loaded
 
         ctl_box = QGroupBox("Display")
         df = QFormLayout()
         df.addRow("Channel:", self.channel_combo)
         df.addRow(self.cloud_btn)
+        df.addRow(self.calib_btn)
+        df.addRow(self.rf_btn)
         ctl_box.setLayout(df)
 
         self.status_lbl = QLabel("disconnected")
@@ -332,11 +349,38 @@ class LidarPanel(QWidget):
     def _open_cloud(self) -> None:
         if self.cloud_window is None:
             self.cloud_window = PointCloudWindow(thermal_provider=self.thermal_provider)
+            self.cloud_window.set_calibration(self.extr, self.intr)
         self.cloud_window.show()
         self.cloud_window.raise_()
         self.cloud_window.activateWindow()
         if self.last_frame is not None:
             self.cloud_window.update_cloud(self.last_frame)
+
+    def _open_calibration(self) -> None:
+        if self.cal_window is None:
+            self.cal_window = CalibrationWindow(
+                extrinsics=self.extr,
+                intrinsics=self.intr,
+                lidar_provider=lambda: self.last_frame,
+                thermal_provider=self.thermal_provider,
+                on_change=self._apply_calibration,
+            )
+        self.cal_window.show()
+        self.cal_window.raise_()
+        self.cal_window.activateWindow()
+
+    def _apply_calibration(self, extr: Extrinsics, intr: ThermalIntrinsics) -> None:
+        self.extr = extr
+        self.intr = intr
+        if self.cloud_window is not None:
+            self.cloud_window.set_calibration(extr, intr)
+
+    def _open_rf(self) -> None:
+        if self.rf_window is None:
+            self.rf_window = RFWindow()
+        self.rf_window.show()
+        self.rf_window.raise_()
+        self.rf_window.activateWindow()
 
     def _tick_status(self) -> None:
         now = time.monotonic()
@@ -356,6 +400,10 @@ class LidarPanel(QWidget):
         self._stop()
         if self.cloud_window is not None:
             self.cloud_window.close()
+        if self.cal_window is not None:
+            self.cal_window.close()
+        if self.rf_window is not None:
+            self.rf_window.close()
 
 
 # --------------------------------------------------------------------------
