@@ -3,3 +3,7 @@ opencv-python>=4.8
 numpy>=1.24
 flirpy>=0.3
 pyserial>=3.5
+ouster-sdk>=0.11
+pyqtgraph>=0.13
+PyOpenGL>=3.1
+scikit-learn>=1.3

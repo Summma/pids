@@ -188,13 +188,3 @@ class BosonControl:
 def y16_to_celsius(frame: np.ndarray) -> np.ndarray:
     """Boson Y16 radiometric: pixel value is centi-Kelvin (cK)."""
     return frame.astype(np.float32) * 0.01 - 273.15
-
-
-def autoscale_8bit(frame: np.ndarray) -> np.ndarray:
-    """Linearly stretch a 16-bit (or higher-bit) frame into 8-bit for display."""
-    f = frame.astype(np.float32)
-    lo, hi = np.percentile(f, (1, 99))
-    if hi - lo < 1e-6:
-        hi = lo + 1.0
-    out = np.clip((f - lo) * (255.0 / (hi - lo)), 0, 255)
-    return out.astype(np.uint8)
