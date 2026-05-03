@@ -32,12 +32,15 @@ const R_LIDAR_TO_CAM_BASE = [
 export default function CalibrationPanel({
   lidarData,
   thermalData,
+  cameraData,
   calibrationOverride = null,
   onCalibrationChange,
   onClose,
 }) {
   const canvasRef = useRef(null)
   const thermalCanvasRef = useRef(null)
+  const cameraImageRef = useRef(null)
+  const [cameraReadySeq, setCameraReadySeq] = useState(0)
   const fileRef = useRef(null)
 
   const liveCalibration = useMemo(
@@ -61,19 +64,34 @@ export default function CalibrationPanel({
   }, [activeCalibration])
 
   useEffect(() => {
+    const src = cameraData?.frame?.src
+    if (!src) {
+      cameraImageRef.current = null
+      return
+    }
+    const img = new Image()
+    img.onload = () => {
+      cameraImageRef.current = img
+      setCameraReadySeq(seq => seq + 1)
+    }
+    img.src = src
+  }, [cameraData?.frame?.src])
+
+  useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
     const rendered = renderCalibrationCanvas({
       canvas,
       thermalCanvasRef,
+      cameraImage: cameraImageRef.current,
       lidarFrame: lidarData?.frameRef?.current,
       thermalFrame: thermalData?.frameRef?.current,
       calibration: cal,
       channel,
     })
     setStats(rendered)
-  }, [cal, channel, lidarData?.meta?.seq, thermalData?.meta?.seq, lidarData?.frameRef, thermalData?.frameRef])
+  }, [cal, channel, lidarData?.meta?.seq, thermalData?.meta?.seq, cameraReadySeq, lidarData?.frameRef, thermalData?.frameRef])
 
   function commitCalibration(nextCalibration) {
     setCal(nextCalibration)
@@ -142,6 +160,7 @@ export default function CalibrationPanel({
 
   const lidarState = lidarData?.connState ?? 'connecting'
   const thermalState = thermalData?.connState ?? 'connecting'
+  const cameraState = cameraData?.connState ?? 'connecting'
   const pointText = `${stats.projected.toLocaleString()} / ${stats.points.toLocaleString()} pts`
   const sourceText = cal.source || 'gui_default'
 
@@ -151,7 +170,7 @@ export default function CalibrationPanel({
         <span className={styles.title}>Thermal-Lidar Calibration</span>
         <div className={styles.headerRight}>
           <span className={styles.status}>
-            Lidar {lidarState} | Thermal {thermalState} | {pointText}
+            Lidar {lidarState} | Thermal {thermalState} | Camera {cameraState} | {pointText}
           </span>
           <button className="btn" onClick={onClose}>Close</button>
         </div>
@@ -232,11 +251,11 @@ export default function CalibrationPanel({
   )
 }
 
-function renderCalibrationCanvas({ canvas, thermalCanvasRef, lidarFrame, thermalFrame, calibration, channel }) {
+function renderCalibrationCanvas({ canvas, thermalCanvasRef, cameraImage, lidarFrame, thermalFrame, calibration, channel }) {
   const intr = calibration.intr
   const width = intr.width
   const height = intr.height
-  const totalWidth = width * 2
+  const totalWidth = width * 3
   if (canvas.width !== totalWidth || canvas.height !== height) {
     canvas.width = totalWidth
     canvas.height = height
@@ -254,6 +273,7 @@ function renderCalibrationCanvas({ canvas, thermalCanvasRef, lidarFrame, thermal
   }
 
   drawThermalFrame(ctx, thermalCanvasRef, thermalFrame, width, height, width, 0)
+  drawCameraFrame(ctx, cameraImage, width, height, width * 2, 0)
   drawPanelLabels(ctx, width)
   return { projected: lidar.projected, points: lidar.points }
 }
@@ -368,7 +388,7 @@ function drawThermalFrame(ctx, thermalCanvasRef, frame, width, height, dx, dy) {
   ctx.drawImage(source, dx, dy, width, height)
 }
 
-function drawPanelLabels(ctx, lidarWidth) {
+function drawPanelLabels(ctx, paneWidth) {
   ctx.font = '700 18px sans-serif'
   ctx.textBaseline = 'top'
   ctx.lineWidth = 4
@@ -376,8 +396,23 @@ function drawPanelLabels(ctx, lidarWidth) {
   ctx.fillStyle = '#ffffff'
   ctx.strokeText('LIDAR', 10, 10)
   ctx.fillText('LIDAR', 10, 10)
-  ctx.strokeText('THERMAL', lidarWidth + 10, 10)
-  ctx.fillText('THERMAL', lidarWidth + 10, 10)
+  ctx.strokeText('THERMAL', paneWidth + 10, 10)
+  ctx.fillText('THERMAL', paneWidth + 10, 10)
+  ctx.strokeText('CAMERA', paneWidth * 2 + 10, 10)
+  ctx.fillText('CAMERA', paneWidth * 2 + 10, 10)
+}
+
+function drawCameraFrame(ctx, cameraImage, width, height, dx, dy) {
+  fillBlank(ctx, dx, dy, width, height)
+  if (!cameraImage || !cameraImage.naturalWidth || !cameraImage.naturalHeight) return
+  const srcW = cameraImage.naturalWidth
+  const srcH = cameraImage.naturalHeight
+  const scale = Math.min(width / srcW, height / srcH)
+  const drawW = srcW * scale
+  const drawH = srcH * scale
+  const offsetX = dx + (width - drawW) / 2
+  const offsetY = dy + (height - drawH) / 2
+  ctx.drawImage(cameraImage, offsetX, offsetY, drawW, drawH)
 }
 
 function fillBlank(ctx, x, y, width, height) {

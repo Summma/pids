@@ -219,6 +219,7 @@ export default function App() {
         <CalibrationPanel
           lidarData={lidar}
           thermalData={thermal}
+          cameraData={camera}
           calibrationOverride={thermalCalibrationOverride}
           onCalibrationChange={setThermalCalibrationOverride}
           onClose={() => setShowCal(false)}
