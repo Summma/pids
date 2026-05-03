@@ -523,6 +523,8 @@ class CameraStreamer:
         self._last_yolo_at = 0.0
         self._has_yolo_result = False
         self._last_persons: list[dict[str, Any]] = []
+        self._yolo_inflight = False
+        self._yolo_state_lock = threading.Lock()
 
     def open(self) -> None:
         if self.device is None or str(self.device).strip() == "":
@@ -555,6 +557,59 @@ class CameraStreamer:
             self._yolo_error = f"{type(exc).__name__}: {exc}"
             print(f"[camera] yolo unavailable, streaming without overlay: {self._yolo_error}", file=sys.stderr)
 
+    def _maybe_start_yolo(self, frame: np.ndarray, now: float) -> None:
+        if self._yolo is None:
+            return
+        with self._yolo_state_lock:
+            due = (
+                not self._has_yolo_result
+                or self.yolo_period <= 0
+                or now - self._last_yolo_at >= self.yolo_period
+            )
+            if not due or self._yolo_inflight:
+                return
+            self._yolo_inflight = True
+
+        worker = threading.Thread(target=self._run_yolo_worker, args=(frame.copy(),), daemon=True)
+        worker.start()
+
+    def _run_yolo_worker(self, frame: np.ndarray) -> None:
+        persons: list[dict[str, Any]] = []
+        error = ""
+        try:
+            results = self._yolo.predict(
+                source=frame,
+                imgsz=self.yolo_imgsz,
+                conf=self.yolo_conf,
+                classes=[0],
+                verbose=False,
+            )
+            r0 = results[0]
+            if r0.boxes is not None and len(r0.boxes) > 0:
+                xyxy = r0.boxes.xyxy.cpu().numpy()
+                confs = r0.boxes.conf.cpu().numpy()
+                for box, conf in zip(xyxy, confs):
+                    persons.append({
+                        "bbox_xyxy": [
+                            float(box[0]), float(box[1]),
+                            float(box[2]), float(box[3]),
+                        ],
+                        "confidence": float(conf),
+                    })
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+
+        with self._yolo_state_lock:
+            if error:
+                if not self._yolo_error:
+                    self._yolo_error = error
+                    print(f"[camera] yolo inference failed: {self._yolo_error}", file=sys.stderr)
+            else:
+                self._last_persons = persons
+                self._has_yolo_result = True
+            self._last_yolo_at = time.time()
+            self._yolo_inflight = False
+
     def close(self) -> None:
         if self.cap is not None:
             self.cap.release()
@@ -573,43 +628,10 @@ class CameraStreamer:
             persons: list[dict[str, Any]] = []
             src_h, src_w = frame.shape[:2]
             now = time.time()
-            should_run_yolo = (
-                self._yolo is not None
-                and (not self._has_yolo_result or self.yolo_period <= 0 or now - self._last_yolo_at >= self.yolo_period)
-            )
-            if should_run_yolo:
-                try:
-                    results = self._yolo.predict(
-                        source=frame,
-                        imgsz=self.yolo_imgsz,
-                        conf=self.yolo_conf,
-                        classes=[0],
-                        verbose=False,
-                    )
-                    r0 = results[0]
-                    if r0.boxes is not None and len(r0.boxes) > 0:
-                        xyxy = r0.boxes.xyxy.cpu().numpy()
-                        confs = r0.boxes.conf.cpu().numpy()
-                        for box, conf in zip(xyxy, confs):
-                            persons.append({
-                                "bbox_xyxy": [
-                                    float(box[0]), float(box[1]),
-                                    float(box[2]), float(box[3]),
-                                ],
-                                "confidence": float(conf),
-                            })
-                    num_persons = len(persons)
-                    self._last_persons = persons
-                    self._has_yolo_result = True
-                    self._last_yolo_at = time.time()
-                except Exception as exc:
-                    self._last_yolo_at = time.time()
-                    if not self._yolo_error:
-                        self._yolo_error = f"{type(exc).__name__}: {exc}"
-                        print(f"[camera] yolo inference failed: {self._yolo_error}", file=sys.stderr)
-            else:
+            self._maybe_start_yolo(frame, now)
+            with self._yolo_state_lock:
                 persons = [dict(person) for person in self._last_persons]
-                num_persons = len(persons)
+            num_persons = len(persons)
 
             draw_person_boxes(frame, persons)
 
