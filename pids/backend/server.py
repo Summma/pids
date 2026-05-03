@@ -504,6 +504,7 @@ class CameraStreamer:
         yolo_model: str = "",
         yolo_conf: float = 0.4,
         yolo_imgsz: int = 640,
+        yolo_fps: float = 0.0,
     ) -> None:
         self.device = device
         self.period = 1.0 / max(fps, 1.0)
@@ -516,8 +517,12 @@ class CameraStreamer:
         self.yolo_model_name = yolo_model.strip()
         self.yolo_conf = float(yolo_conf)
         self.yolo_imgsz = int(yolo_imgsz)
+        self.yolo_period = 0.0 if yolo_fps <= 0 else 1.0 / max(float(yolo_fps), 0.1)
         self._yolo = None
         self._yolo_error = ""
+        self._last_yolo_at = 0.0
+        self._has_yolo_result = False
+        self._last_persons: list[dict[str, Any]] = []
 
     def open(self) -> None:
         if self.device is None or str(self.device).strip() == "":
@@ -567,7 +572,12 @@ class CameraStreamer:
             num_persons = 0
             persons: list[dict[str, Any]] = []
             src_h, src_w = frame.shape[:2]
-            if self._yolo is not None:
+            now = time.time()
+            should_run_yolo = (
+                self._yolo is not None
+                and (not self._has_yolo_result or self.yolo_period <= 0 or now - self._last_yolo_at >= self.yolo_period)
+            )
+            if should_run_yolo:
                 try:
                     results = self._yolo.predict(
                         source=frame,
@@ -589,11 +599,19 @@ class CameraStreamer:
                                 "confidence": float(conf),
                             })
                     num_persons = len(persons)
-                    frame = r0.plot()
+                    self._last_persons = persons
+                    self._has_yolo_result = True
+                    self._last_yolo_at = now
                 except Exception as exc:
+                    self._last_yolo_at = now
                     if not self._yolo_error:
                         self._yolo_error = f"{type(exc).__name__}: {exc}"
                         print(f"[camera] yolo inference failed: {self._yolo_error}", file=sys.stderr)
+            else:
+                persons = [dict(person) for person in self._last_persons]
+                num_persons = len(persons)
+
+            draw_person_boxes(frame, persons)
 
             ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
             if not ok:
@@ -611,12 +629,43 @@ class CameraStreamer:
                     "mime": "image/jpeg",
                     "data": base64.b64encode(encoded.tobytes()).decode("ascii"),
                     "seq": self.seq,
-                    "ts": time.time(),
+                    "ts": now,
                     "num_persons": num_persons,
                     "persons": persons,
                 },
                 separators=(",", ":"),
             )
+
+
+def draw_person_boxes(frame: np.ndarray, persons: list[dict[str, Any]]) -> None:
+    if not persons:
+        return
+    h, w = frame.shape[:2]
+    color = (0, 190, 255)
+    for person in persons:
+        box = person.get("bbox_xyxy") or []
+        if len(box) != 4:
+            continue
+        x1, y1, x2, y2 = [int(round(float(v))) for v in box]
+        x1 = max(0, min(w - 1, x1))
+        x2 = max(0, min(w - 1, x2))
+        y1 = max(0, min(h - 1, y1))
+        y2 = max(0, min(h - 1, y2))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        conf = person.get("confidence")
+        label = "person" if conf is None else f"person {float(conf):.2f}"
+        cv2.putText(
+            frame,
+            label,
+            (x1, max(14, y1 - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
 
 
 class DetectionEngine:
@@ -1082,11 +1131,12 @@ def pack_lidar_binary(points: np.ndarray, intensities: np.ndarray, max_points: i
 
 
 def clamp_lidar_max_points(value: Optional[int], default: int) -> int:
+    cap = max(LIDAR_MIN_POINTS, min(int(default), LIDAR_MAX_POINTS))
     try:
         points = int(value if value is not None else default)
     except (TypeError, ValueError):
         points = int(default)
-    return max(LIDAR_MIN_POINTS, min(points, LIDAR_MAX_POINTS))
+    return max(LIDAR_MIN_POINTS, min(points, cap))
 
 
 KITTI_CLASS_NAMES = ("Car", "Pedestrian", "Cyclist")
@@ -2539,6 +2589,7 @@ def build_app(
     yolo_model: str,
     yolo_conf: float,
     yolo_imgsz: int,
+    yolo_fps: float,
     detection_mode: str,
     detection_fps: float,
     pointpillars_endpoint: str,
@@ -2573,6 +2624,7 @@ def build_app(
         yolo_model=yolo_model,
         yolo_conf=yolo_conf,
         yolo_imgsz=yolo_imgsz,
+        yolo_fps=yolo_fps,
     )
     app["detection_engine_default_mode"] = normalize_detection_mode(detection_mode, "indoor_human")
     app["detection_engine_config"] = {
@@ -2628,6 +2680,8 @@ def parse_args() -> argparse.Namespace:
                         help="Ultralytics weights for camera person detection (empty disables)")
     parser.add_argument("--yolo-conf", type=float, default=float(os.getenv("PIDS_YOLO_CONF", "0.4")))
     parser.add_argument("--yolo-imgsz", type=int, default=int(os.getenv("PIDS_YOLO_IMGSZ", "640")))
+    parser.add_argument("--yolo-fps", type=float, default=float(os.getenv("PIDS_YOLO_FPS", "0")),
+                        help="Maximum YOLO detections per second; 0 runs detection on every camera frame")
     parser.add_argument("--detection-mode", default="indoor_human", choices=DETECTION_MODES)
     parser.add_argument("--detection-fps", type=float, default=2.0)
     parser.add_argument("--pointpillars-endpoint", default=os.getenv("PIDS_POINTPILLARS_ENDPOINT", ""))
@@ -2659,6 +2713,7 @@ def main() -> None:
         yolo_model=args.yolo_model,
         yolo_conf=args.yolo_conf,
         yolo_imgsz=args.yolo_imgsz,
+        yolo_fps=args.yolo_fps,
         detection_mode=args.detection_mode,
         detection_fps=args.detection_fps,
         pointpillars_endpoint=args.pointpillars_endpoint,

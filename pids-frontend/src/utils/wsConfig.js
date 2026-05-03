@@ -90,7 +90,7 @@ export const THERMAL_PALETTE_OPTIONS = [
 export let HOST = envHost ?? stored.host ?? defaultHost
 export let PORT = Number(envPort ?? stored.port ?? 9090)
 export let DETECTION_MODE = normalizeDetectionMode(envDetectionMode ?? stored.detectionMode ?? 'auto')
-export let LIDAR_MAX_POINTS = normalizeLidarMaxPoints(envLidarMaxPoints ?? stored.lidarMaxPoints ?? 60000)
+export let LIDAR_MAX_POINTS = normalizeLidarMaxPoints(envLidarMaxPoints ?? stored.lidarMaxPoints ?? 30000)
 export let THERMAL_PALETTE = normalizeThermalPalette(envThermalPalette ?? stored.thermalPalette ?? 'iron')
 export let SHOW_THERMAL_FOV = normalizeBool(envShowThermalFov ?? stored.showThermalFov ?? true)
 
@@ -173,10 +173,10 @@ export function normalizeDetectionMode(value) {
 
 export function normalizeLidarMaxPoints(value) {
   const points = Number(value)
-  if (!Number.isFinite(points)) return 60000
+  if (!Number.isFinite(points)) return 30000
   const rounded = Math.round(points)
   const clamped = Math.max(1000, Math.min(rounded, 131072))
-  return LIDAR_POINT_OPTIONS.some(option => option.value === clamped) ? clamped : 60000
+  return LIDAR_POINT_OPTIONS.some(option => option.value === clamped) ? clamped : 30000
 }
 
 export function normalizeThermalPalette(value) {
