@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { saveConfig, HOST, PORT } from '@/utils/wsConfig'
 import styles from './TitleBar.module.css'
 
-export default function TitleBar({ systemState, threatStats, onOpenCalibration }) {
+export default function TitleBar({ systemState, threatStats = { critical: 0 }, onOpenCalibration }) {
   const [showSettings, setShowSettings] = useState(false)
   const [host, setHost] = useState(HOST)
   const [port, setPort] = useState(PORT)
@@ -17,9 +17,8 @@ export default function TitleBar({ systemState, threatStats, onOpenCalibration }
     <>
       <header className={styles.bar}>
         <div className={styles.left}>
-          <span className={styles.logo}>◈ PIDS</span>
-          <div className={styles.divider} />
-          <span className={styles.sysTitle}>PERIMETER INTRUSION DETECTION</span>
+          <span className={styles.logo}>◈ Narya</span>
+          
           <div className={styles.divider} />
           <span className={styles.version}>v1.0</span>
         </div>
@@ -36,7 +35,6 @@ export default function TitleBar({ systemState, threatStats, onOpenCalibration }
           <div className={styles.sensorPills}>
             <SensorPill label="THERM" state={systemState.thermal} color="thermal" />
             <SensorPill label="LIDAR" state={systemState.lidar}   color="lidar"   />
-            <SensorPill label="RF"    state={systemState.rf}      color="rf"      />
           </div>
           <button className={styles.iconBtn} onClick={onOpenCalibration} title="Calibration">⊕</button>
           <button className={styles.iconBtn} onClick={() => setShowSettings(s => !s)} title="Settings">⚙</button>
