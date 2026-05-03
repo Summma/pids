@@ -501,6 +501,9 @@ class CameraStreamer:
         width: int,
         height: int,
         jpeg_quality: int,
+        yolo_model: str = "",
+        yolo_conf: float = 0.4,
+        yolo_imgsz: int = 640,
     ) -> None:
         self.device = device
         self.period = 1.0 / max(fps, 1.0)
@@ -510,6 +513,11 @@ class CameraStreamer:
         self.cap: Optional[cv2.VideoCapture] = None
         self.seq = 0
         self._read_lock = threading.Lock()
+        self.yolo_model_name = yolo_model.strip()
+        self.yolo_conf = float(yolo_conf)
+        self.yolo_imgsz = int(yolo_imgsz)
+        self._yolo = None
+        self._yolo_error = ""
 
     def open(self) -> None:
         if self.device is None or str(self.device).strip() == "":
@@ -529,6 +537,19 @@ class CameraStreamer:
         if sys.platform.startswith("linux"):
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
+        self._ensure_yolo()
+
+    def _ensure_yolo(self) -> None:
+        if not self.yolo_model_name or self._yolo is not None or self._yolo_error:
+            return
+        try:
+            from ultralytics import YOLO
+            self._yolo = YOLO(self.yolo_model_name)
+            print(f"[camera] yolo loaded: {self.yolo_model_name}", file=sys.stderr)
+        except Exception as exc:
+            self._yolo_error = f"{type(exc).__name__}: {exc}"
+            print(f"[camera] yolo unavailable, streaming without overlay: {self._yolo_error}", file=sys.stderr)
+
     def close(self) -> None:
         if self.cap is not None:
             self.cap.release()
@@ -542,6 +563,24 @@ class CameraStreamer:
             ok, frame = self.cap.read()
             if not ok or frame is None:
                 raise RuntimeError("camera frame grab failed")
+
+            num_persons = 0
+            if self._yolo is not None:
+                try:
+                    results = self._yolo.predict(
+                        source=frame,
+                        imgsz=self.yolo_imgsz,
+                        conf=self.yolo_conf,
+                        classes=[0],
+                        verbose=False,
+                    )
+                    r0 = results[0]
+                    num_persons = int(len(r0.boxes)) if r0.boxes is not None else 0
+                    frame = r0.plot()
+                except Exception as exc:
+                    if not self._yolo_error:
+                        self._yolo_error = f"{type(exc).__name__}: {exc}"
+                        print(f"[camera] yolo inference failed: {self._yolo_error}", file=sys.stderr)
 
             ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
             if not ok:
@@ -558,6 +597,7 @@ class CameraStreamer:
                     "data": base64.b64encode(encoded.tobytes()).decode("ascii"),
                     "seq": self.seq,
                     "ts": time.time(),
+                    "num_persons": num_persons,
                 },
                 separators=(",", ":"),
             )
@@ -2480,6 +2520,9 @@ def build_app(
     camera_width: int,
     camera_height: int,
     camera_jpeg_quality: int,
+    yolo_model: str,
+    yolo_conf: float,
+    yolo_imgsz: int,
     detection_mode: str,
     detection_fps: float,
     pointpillars_endpoint: str,
@@ -2511,6 +2554,9 @@ def build_app(
         width=camera_width,
         height=camera_height,
         jpeg_quality=camera_jpeg_quality,
+        yolo_model=yolo_model,
+        yolo_conf=yolo_conf,
+        yolo_imgsz=yolo_imgsz,
     )
     app["detection_engine_default_mode"] = normalize_detection_mode(detection_mode, "indoor_human")
     app["detection_engine_config"] = {
@@ -2562,6 +2608,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-width", type=int, default=1280)
     parser.add_argument("--camera-height", type=int, default=720)
     parser.add_argument("--camera-jpeg-quality", type=int, default=75)
+    parser.add_argument("--yolo-model", default=os.getenv("PIDS_YOLO_MODEL", "yolo11n.pt"),
+                        help="Ultralytics weights for camera person detection (empty disables)")
+    parser.add_argument("--yolo-conf", type=float, default=float(os.getenv("PIDS_YOLO_CONF", "0.4")))
+    parser.add_argument("--yolo-imgsz", type=int, default=int(os.getenv("PIDS_YOLO_IMGSZ", "640")))
     parser.add_argument("--detection-mode", default="indoor_human", choices=DETECTION_MODES)
     parser.add_argument("--detection-fps", type=float, default=2.0)
     parser.add_argument("--pointpillars-endpoint", default=os.getenv("PIDS_POINTPILLARS_ENDPOINT", ""))
@@ -2590,6 +2640,9 @@ def main() -> None:
         camera_width=args.camera_width,
         camera_height=args.camera_height,
         camera_jpeg_quality=args.camera_jpeg_quality,
+        yolo_model=args.yolo_model,
+        yolo_conf=args.yolo_conf,
+        yolo_imgsz=args.yolo_imgsz,
         detection_mode=args.detection_mode,
         detection_fps=args.detection_fps,
         pointpillars_endpoint=args.pointpillars_endpoint,
