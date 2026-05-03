@@ -1,0 +1,4 @@
+aiohttp>=3.9
+numpy>=1.24
+opencv-python>=4.8
+flirpy>=0.3
