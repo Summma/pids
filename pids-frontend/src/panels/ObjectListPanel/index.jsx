@@ -51,6 +51,7 @@ export default function ObjectListPanel({ lidarData, selectedObjectKey = '', onS
                           <span>Cov {percent(object.thermalCoverage)}</span>
                           {object.thermalHotFraction > 0 && <span>Hot {percent(object.thermalHotFraction)}</span>}
                           {object.thermalMax > 0 && <span>Tmax {percent(object.thermalMax)}</span>}
+                          {Number.isFinite(object.thermalTempC) && <span>Temp {object.thermalTempC.toFixed(1)}°C</span>}
                         </>
                       )}
                       {object.pointpillarsSupport > 0 && <span>PP {percent(object.pointpillarsSupport)}</span>}
@@ -98,6 +99,7 @@ function normalizeDetections(items) {
       thermalCoverage: clamp01(item.thermal_coverage ?? 0),
       thermalMax: clamp01(item.thermal_max ?? 0),
       thermalHotFraction: clamp01(item.thermal_hot_fraction ?? 0),
+      thermalTempC: finiteOrNull(item.thermal_temp_c),
       pointpillarsSupport: clamp01(item.pointpillars_support ?? 0),
       supportPoints: finiteOrNull(item.support_points),
       supportZSpan: finiteOrNull(item.support_z_span),

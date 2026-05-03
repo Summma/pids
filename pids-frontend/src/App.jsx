@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import TitleBar        from '@/components/TitleBar'
 import GeminiSidebar   from '@/components/GeminiSidebar'
 import WorldMapPanel   from '@/panels/WorldMapPanel'
@@ -18,6 +18,7 @@ import {
   THERMAL_PALETTE,
   SHOW_THERMAL_FOV,
 } from '@/utils/wsConfig'
+import { synthesizePersonDetections } from '@/utils/yoloDetections'
 import styles from './App.module.css'
 
 const SENSOR_VIEWS = [
@@ -54,6 +55,29 @@ export default function App() {
   const thermal = useThermal(streamConfig)
   const lidar   = useLidar(streamConfig)
   const camera  = useCamera(streamConfig)
+
+  const yoloDetections = useMemo(() => synthesizePersonDetections({
+    persons: camera.frame?.persons ?? [],
+    frameW: camera.frame?.frameW ?? 0,
+    frameH: camera.frame?.frameH ?? 0,
+    thermalFrame: thermal.frameRef?.current,
+    thermalMin: thermal.meta?.tMin,
+    thermalMax: thermal.meta?.tMax,
+    thermalCalibration: thermal.meta?.calibration,
+    lidarFrame: lidar.frameRef?.current,
+  }), [
+    camera.frame?.seq,
+    thermal.meta?.seq,
+    lidar.meta?.seq,
+    thermal.meta?.calibration,
+  ])
+
+  const lidarWithYolo = useMemo(() => ({
+    ...lidar,
+    detections: yoloDetections.length
+      ? [...yoloDetections, ...(lidar.detections ?? [])]
+      : lidar.detections,
+  }), [lidar, yoloDetections])
 
   function selectObject(objectKey) {
     setSelectedObjectKey(objectKey)
@@ -236,7 +260,7 @@ export default function App() {
               onSend={askSceneAnalyst}
             />
             <ObjectListPanel
-              lidarData={lidar}
+              lidarData={lidarWithYolo}
               selectedObjectKey={selectedObjectKey}
               onSelectObject={selectObject}
             />
