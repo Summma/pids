@@ -1272,22 +1272,115 @@ def axis_aligned_iou(a_center: np.ndarray, a_size: np.ndarray, b_center: np.ndar
     return inter_vol / max(a_vol + b_vol - inter_vol, 1e-6)
 
 
-THERMAL_INTR = {
+GUI_DEFAULT_THERMAL_INTR = {
     "width": 640,
     "height": 512,
-    "fx": 1092.1914623848218,
-    "fy": 1092.1914623848218,
+    "fx": 686.0,
+    "fy": 686.0,
     "cx": 320.0,
     "cy": 256.0,
 }
-THERMAL_EXTR = {
+GUI_DEFAULT_THERMAL_EXTR = {
     "tx": 0.0,
     "ty": 0.0,
-    "tz": -0.225,
+    "tz": 0.0,
     "roll_deg": 0.0,
     "pitch_deg": 0.0,
     "yaw_deg": 0.0,
 }
+
+
+def _numeric(value: Any, fallback: float) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return out if np.isfinite(out) else fallback
+
+
+def _normalize_thermal_intrinsics(value: Any) -> dict[str, float]:
+    src = value if isinstance(value, dict) else {}
+    intr = dict(GUI_DEFAULT_THERMAL_INTR)
+    for key in ("width", "height", "fx", "fy", "cx", "cy"):
+        intr[key] = _numeric(src.get(key), float(intr[key]))
+    intr["width"] = int(max(1, round(intr["width"])))
+    intr["height"] = int(max(1, round(intr["height"])))
+    return intr
+
+
+def _normalize_thermal_extrinsics(value: Any) -> dict[str, float]:
+    src = value if isinstance(value, dict) else {}
+    extr = dict(GUI_DEFAULT_THERMAL_EXTR)
+    for key in ("tx", "ty", "tz", "roll_deg", "pitch_deg", "yaw_deg"):
+        camel = {
+            "roll_deg": "rollDeg",
+            "pitch_deg": "pitchDeg",
+            "yaw_deg": "yawDeg",
+        }.get(key, key)
+        extr[key] = _numeric(src.get(key, src.get(camel)), float(extr[key]))
+    return extr
+
+
+def resolve_thermal_calibration_path() -> Optional[Path]:
+    override = os.environ.get("PIDS_THERMAL_CALIBRATION", "").strip()
+    candidates: list[Path] = []
+    if override:
+        candidates.append(Path(override).expanduser())
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidates.append(parent / "pids" / "boson_gui" / "calibration.json")
+        candidates.append(parent / "boson_gui" / "calibration.json")
+
+    seen: set[Path] = set()
+    for path in candidates:
+        path = path.resolve()
+        if path in seen:
+            continue
+        seen.add(path)
+        if path.is_file():
+            return path
+    return None
+
+
+def load_thermal_calibration() -> dict[str, Any]:
+    path = resolve_thermal_calibration_path()
+    data: dict[str, Any] = {}
+    error = ""
+    ok = False
+    source = "gui_default"
+
+    if path is not None:
+        source = str(path)
+        try:
+            data = json.loads(path.read_text())
+            if not isinstance(data, dict):
+                data = {}
+            ok = True
+        except Exception as exc:
+            error = str(exc)
+            data = {}
+
+    return {
+        "intrinsics": _normalize_thermal_intrinsics(data.get("intrinsics")),
+        "extrinsics": _normalize_thermal_extrinsics(data.get("extrinsics")),
+        "source": source,
+        "ok": ok,
+        "error": error,
+    }
+
+
+def refresh_thermal_calibration() -> dict[str, Any]:
+    global THERMAL_CALIBRATION, THERMAL_INTR, THERMAL_EXTR
+    THERMAL_CALIBRATION = load_thermal_calibration()
+    THERMAL_INTR = THERMAL_CALIBRATION["intrinsics"]
+    THERMAL_EXTR = THERMAL_CALIBRATION["extrinsics"]
+    return THERMAL_CALIBRATION
+
+
+THERMAL_CALIBRATION = load_thermal_calibration()
+THERMAL_INTR = THERMAL_CALIBRATION["intrinsics"]
+THERMAL_EXTR = THERMAL_CALIBRATION["extrinsics"]
 R_LIDAR_TO_CAM_BASE = np.array(
     [[0.0, -1.0, 0.0], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]],
     dtype=np.float64,
@@ -1714,7 +1807,7 @@ async def cors_middleware(request: web.Request, handler) -> web.StreamResponse:
     return response
 
 
-def packet_json(packet: ThermalPacket, seq: int) -> str:
+def packet_json(packet: ThermalPacket, seq: int, calibration: Optional[dict[str, Any]] = None) -> str:
     return json.dumps(
         {
             "type": "frame",
@@ -1726,6 +1819,7 @@ def packet_json(packet: ThermalPacket, seq: int) -> str:
             "radiometric": packet.radiometric,
             "seq": seq,
             "ts": time.time(),
+            "calibration": calibration or THERMAL_CALIBRATION,
         },
         separators=(",", ":"),
     )
@@ -1733,8 +1827,10 @@ def packet_json(packet: ThermalPacket, seq: int) -> str:
 
 async def thermal_ws(request: web.Request) -> web.WebSocketResponse:
     camera: ThermalCamera = request.app["thermal_camera"]
+    calibration: dict[str, Any] = request.app.get("thermal_calibration", THERMAL_CALIBRATION)
     ws = web.WebSocketResponse(heartbeat=15)
     await ws.prepare(request)
+    await ws.send_json({"type": "calibration", "calibration": calibration, "seq": camera.seq, "ts": time.time()})
 
     async def read_controls() -> None:
         async for msg in ws:
@@ -1751,14 +1847,14 @@ async def thermal_ws(request: web.Request) -> web.WebSocketResponse:
     try:
         while not ws.closed:
             packet = await asyncio.to_thread(camera.read_packet)
-            await ws.send_str(packet_json(packet, camera.seq))
+            await ws.send_str(packet_json(packet, camera.seq, calibration))
             await asyncio.sleep(camera.period)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         print(f"thermal websocket error: {exc}", file=sys.stderr)
         if not ws.closed:
-            await ws.send_json({"type": "error", "message": str(exc)})
+            await ws.send_json({"type": "error", "message": str(exc), "calibration": calibration})
     finally:
         controls.cancel()
     return ws
@@ -1854,6 +1950,7 @@ async def health(request: web.Request) -> web.Response:
     static_dir: Optional[Path] = request.app.get("static_dir")
     engines: Dict[str, DetectionEngine] = request.app.get("detection_engines", {})
     detector_config: dict = request.app.get("detection_engine_config", {})
+    calibration: dict[str, Any] = request.app.get("thermal_calibration", THERMAL_CALIBRATION)
     pp_endpoint = str(detector_config.get("pointpillars_endpoint", ""))
     return web.json_response(
         {
@@ -1864,6 +1961,9 @@ async def health(request: web.Request) -> web.Response:
             "frontend_static_dir": str(static_dir) if static_dir else "",
             "thermal_configured": thermal.device is not None and thermal.device >= 0,
             "thermal_device": thermal.device,
+            "thermal_calibration": calibration,
+            "thermal_calibration_source": calibration.get("source", ""),
+            "thermal_calibration_configured": bool(calibration.get("ok")),
             "lidar_configured": bool(lidar.host),
             "lidar_host": lidar.host,
             "lidar_default_max_points": lidar.max_points,
@@ -1930,6 +2030,7 @@ def build_app(
     gemini_timeout_s: float,
 ) -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
+    app["thermal_calibration"] = refresh_thermal_calibration()
     app["thermal_camera"] = ThermalCamera(device=device, fps=fps)
     app["lidar_streamer"] = LidarStreamer(
         host=lidar_host,

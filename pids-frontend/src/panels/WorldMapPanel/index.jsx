@@ -9,9 +9,10 @@ const VIEW_DISTANCE = 15
 const VIEW_ELEVATION_DEG = 34
 const VIEW_AZIMUTH_DEG = 42
 const FOV_DEPTH_M = 10
-const THERMAL_CALIBRATION = {
-  intr: { width: 640, height: 512, fx: 1092.1914623848218, fy: 1092.1914623848218, cx: 320, cy: 256 },
-  extr: { tx: 0, ty: 0, tz: -0.225, rollDeg: 0, pitchDeg: 0, yawDeg: 0 },
+const GUI_DEFAULT_THERMAL_CALIBRATION = {
+  intr: { width: 640, height: 512, fx: 686, fy: 686, cx: 320, cy: 256 },
+  extr: { tx: 0, ty: 0, tz: 0, rollDeg: 0, pitchDeg: 0, yawDeg: 0 },
+  source: 'gui_default',
 }
 const MODES = [
   { key: 0, label: 'Thermal', title: 'thermal camera projection' },
@@ -88,6 +89,10 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
   const [mode, setMode] = useState(0)
 
   const boxes = useMemo(() => normalizeDetections(detections), [detections])
+  const thermalCalibration = useMemo(
+    () => normalizeThermalCalibration(thermalMeta.calibration),
+    [thermalMeta.calibration],
+  )
   const thermalConfirmed = boxes.filter(box => box.thermalScore >= 0.62 && box.thermalCoverage >= 0.12).length
   const thermalStatus = thermalError || (thermalState === 'live' ? `${thermalMeta.tMin.toFixed(1)}-${thermalMeta.tMax.toFixed(1)} C` : 'thermal offline')
   const subtitle = `${lidarMeta.n.toLocaleString()} pts · ${boxes.length} ${boxes.length === 1 ? 'box' : 'boxes'} · ${thermalConfirmed} heat-supported`
@@ -126,7 +131,7 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
 
     scene.add(makeAlejandroGrid())
     scene.add(makeLidarAxes())
-    const fovGroup = makeThermalFovGroup(FOV_DEPTH_M)
+    const fovGroup = makeThermalFovGroup(FOV_DEPTH_M, GUI_DEFAULT_THERMAL_CALIBRATION)
     scene.add(fovGroup)
     scene.add(new THREE.AmbientLight(0xffffff, 0.8))
 
@@ -179,6 +184,7 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
     ro.observe(el)
 
     sceneRef.current = {
+      scene,
       renderer,
       controls,
       geo,
@@ -197,7 +203,7 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
       ro.disconnect()
       controls.dispose()
       disposeGroup(boxGroup)
-      disposeGroup(fovGroup)
+      disposeGroup(sceneRef.current?.fovGroup ?? fovGroup)
       geo.dispose()
       mat.dispose()
       renderer.dispose()
@@ -205,6 +211,18 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
       sceneRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    const ctx = sceneRef.current
+    if (!ctx) return
+    if (ctx.fovGroup) {
+      ctx.scene.remove(ctx.fovGroup)
+      disposeGroup(ctx.fovGroup)
+    }
+    ctx.fovGroup = makeThermalFovGroup(FOV_DEPTH_M, thermalCalibration)
+    ctx.scene.add(ctx.fovGroup)
+    ctx.renderScene()
+  }, [thermalCalibration])
 
   useEffect(() => {
     const ctx = sceneRef.current
@@ -224,25 +242,25 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
     }
     ctx.intn.set(frame.intensities.subarray(0, n))
     updateScalarBounds(ctx, frame, n)
-    updateThermalProjection(ctx, frame, thermalFrameRef.current, n)
+    updateThermalProjection(ctx, frame, thermalFrameRef.current, n, thermalCalibration)
     ctx.geo.attributes.position.needsUpdate = true
     ctx.geo.attributes.intensity.needsUpdate = true
     ctx.geo.attributes.thermalValue.needsUpdate = true
     ctx.geo.attributes.thermalValid.needsUpdate = true
     ctx.geo.setDrawRange(0, n)
     ctx.renderScene()
-  }, [frameRef, thermalFrameRef, lidarMeta.seq])
+  }, [frameRef, thermalFrameRef, lidarMeta.seq, thermalCalibration])
 
   useEffect(() => {
     const ctx = sceneRef.current
     const frame = frameRef.current
     if (!ctx || !frame || frame.n === 0) return
     const n = Math.min(frame.n, MAX_POINTS)
-    updateThermalProjection(ctx, frame, thermalFrameRef.current, n)
+    updateThermalProjection(ctx, frame, thermalFrameRef.current, n, thermalCalibration)
     ctx.geo.attributes.thermalValue.needsUpdate = true
     ctx.geo.attributes.thermalValid.needsUpdate = true
     ctx.renderScene()
-  }, [frameRef, thermalFrameRef, thermalMeta.seq])
+  }, [frameRef, thermalFrameRef, thermalMeta.seq, thermalCalibration])
 
   useEffect(() => {
     const ctx = sceneRef.current
@@ -301,6 +319,42 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
 
 export default WorldMapPanel
 
+function normalizeThermalCalibration(value) {
+  const fallback = GUI_DEFAULT_THERMAL_CALIBRATION
+  const intrValue = value?.intrinsics ?? value?.intr ?? {}
+  const extrValue = value?.extrinsics ?? value?.extr ?? {}
+  const intr = {
+    width: intOr(intrValue.width, fallback.intr.width, 1),
+    height: intOr(intrValue.height, fallback.intr.height, 1),
+    fx: numberOr(intrValue.fx, fallback.intr.fx),
+    fy: numberOr(intrValue.fy, fallback.intr.fy),
+    cx: numberOr(intrValue.cx, fallback.intr.cx),
+    cy: numberOr(intrValue.cy, fallback.intr.cy),
+  }
+  const extr = {
+    tx: numberOr(extrValue.tx, fallback.extr.tx),
+    ty: numberOr(extrValue.ty, fallback.extr.ty),
+    tz: numberOr(extrValue.tz, fallback.extr.tz),
+    rollDeg: numberOr(extrValue.rollDeg ?? extrValue.roll_deg, fallback.extr.rollDeg),
+    pitchDeg: numberOr(extrValue.pitchDeg ?? extrValue.pitch_deg, fallback.extr.pitchDeg),
+    yawDeg: numberOr(extrValue.yawDeg ?? extrValue.yaw_deg, fallback.extr.yawDeg),
+  }
+  return {
+    intr,
+    extr,
+    source: String(value?.source ?? fallback.source),
+  }
+}
+
+function numberOr(value, fallback) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function intOr(value, fallback, minValue) {
+  return Math.max(minValue, Math.round(numberOr(value, fallback)))
+}
+
 function drawDetectionBoxes(group, boxes) {
   disposeGroup(group)
   boxes.forEach(box => {
@@ -343,7 +397,7 @@ function lidarToScene(v) {
   return [-v[1], v[2], v[0]]
 }
 
-function updateThermalProjection(ctx, frame, thermalFrame, n) {
+function updateThermalProjection(ctx, frame, thermalFrame, n, calibration) {
   ctx.mat.uniforms.uHasThermal.value = thermalFrame?.data?.length ? 1 : 0
   if (!thermalFrame?.data?.length) {
     ctx.thermalValid.fill(0, 0, n)
@@ -351,7 +405,7 @@ function updateThermalProjection(ctx, frame, thermalFrame, n) {
     return
   }
 
-  const { intr } = THERMAL_CALIBRATION
+  const { intr } = calibration
   const scaleU = thermalFrame.w / intr.width
   const scaleV = thermalFrame.h / intr.height
 
@@ -361,6 +415,7 @@ function updateThermalProjection(ctx, frame, thermalFrame, n) {
       frame.positions[src],
       frame.positions[src + 1],
       frame.positions[src + 2],
+      calibration,
     )
 
     if (!projected.valid) {
@@ -419,9 +474,9 @@ function percentileBounds(sortedValues, loPct, hiPct, fallback) {
   return [lo, hi]
 }
 
-function projectLidarToThermal(x, y, z) {
-  const { intr, extr } = THERMAL_CALIBRATION
-  const r = lidarToCameraRotation()
+function projectLidarToThermal(x, y, z, calibration) {
+  const { intr, extr } = calibration
+  const r = lidarToCameraRotation(calibration)
   const camX = r[0][0] * x + r[0][1] * y + r[0][2] * z + extr.tx
   const camY = r[1][0] * x + r[1][1] * y + r[1][2] * z + extr.ty
   const camZ = r[2][0] * x + r[2][1] * y + r[2][2] * z + extr.tz
@@ -436,9 +491,9 @@ function projectLidarToThermal(x, y, z) {
   }
 }
 
-function makeThermalFovGroup(depthM) {
+function makeThermalFovGroup(depthM, calibration) {
   const group = new THREE.Group()
-  const { apex, near, far } = thermalFrustumPoints(depthM)
+  const { apex, near, far } = thermalFrustumPoints(depthM, calibration)
   const lineVertices = []
 
   far.forEach(corner => lineVertices.push(apex, corner))
@@ -478,8 +533,8 @@ function makeThermalFovGroup(depthM) {
   return group
 }
 
-function thermalFrustumPoints(depthM) {
-  const { intr, extr } = THERMAL_CALIBRATION
+function thermalFrustumPoints(depthM, calibration) {
+  const { intr, extr } = calibration
   const nearM = Math.max(0.05, depthM * 0.05)
   const farM = Math.max(nearM + 0.01, depthM)
   const cornersAt = (d) => {
@@ -488,14 +543,14 @@ function thermalFrustumPoints(depthM) {
     return ux.map((x, i) => [x * d, vy[i] * d, d])
   }
   return {
-    apex: cameraToLidar([0, 0, 0], extr),
-    near: cornersAt(nearM).map(p => cameraToLidar(p, extr)),
-    far: cornersAt(farM).map(p => cameraToLidar(p, extr)),
+    apex: cameraToLidar([0, 0, 0], extr, calibration),
+    near: cornersAt(nearM).map(p => cameraToLidar(p, extr, calibration)),
+    far: cornersAt(farM).map(p => cameraToLidar(p, extr, calibration)),
   }
 }
 
-function cameraToLidar(cam, extr) {
-  const r = lidarToCameraRotation()
+function cameraToLidar(cam, extr, calibration) {
+  const r = lidarToCameraRotation(calibration)
   const p = [cam[0] - extr.tx, cam[1] - extr.ty, cam[2] - extr.tz]
   return [
     r[0][0] * p[0] + r[1][0] * p[1] + r[2][0] * p[2],
@@ -504,8 +559,8 @@ function cameraToLidar(cam, extr) {
   ]
 }
 
-function lidarToCameraRotation() {
-  const { extr } = THERMAL_CALIBRATION
+function lidarToCameraRotation(calibration) {
+  const { extr } = calibration
   const rUser = eulerToR(
     THREE.MathUtils.degToRad(extr.rollDeg),
     THREE.MathUtils.degToRad(extr.pitchDeg),
