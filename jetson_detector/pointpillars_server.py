@@ -45,6 +45,9 @@ MIN_SCORE_BY_CLASS = {
     1: 0.24,  # Pedestrian
     2: 0.32,  # Cyclist
 }
+# Class IDs to drop from the published detections. Demo deployments without
+# any cars in scene set this to {0} so spurious Car boxes never reach clients.
+SUPPRESSED_CLASS_IDS = {0}
 MAX_RETURNED_DETECTIONS = 80
 
 
@@ -154,6 +157,8 @@ def filter_detections(detections: list[dict[str, Any]], points: np.ndarray) -> l
         if center.shape != (3,) or size.shape != (3,):
             continue
         class_id = int(det.get("class_id", -1))
+        if class_id in SUPPRESSED_CLASS_IDS:
+            continue
         score = float(det.get("score", 0.0))
         if score < score_floor(class_id, center):
             continue
