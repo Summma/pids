@@ -6,7 +6,7 @@
   align-items: center;
   justify-content: flex-end;
   padding: 0 24px;
-  background: rgba(246, 247, 248, 0.9);
+  background: rgba(24, 28, 33, 0.78);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border);
   z-index: 1000;
@@ -86,7 +86,7 @@
   height: 36px;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid transparent;
   border-radius: 999px;
   color: var(--text-pri);
@@ -218,7 +218,7 @@
   letter-spacing: 0;
   transition: background 0.15s;
 }
-.settingsApply:hover { background: #303030; }
+.settingsApply:hover { background: #ffffff; }
 .settingsApply:disabled {
   cursor: default;
   background: var(--surface-2);

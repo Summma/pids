@@ -1,37 +1,37 @@
 :root {
   /* Backgrounds */
-  --bg:        #f6f7f8;
-  --surface:   #ffffff;
-  --surface-2: #f1f2f3;
-  --surface-3: #e7e9eb;
-  --canvas:    #0d0f12;
-  --ink:       #171717;
+  --bg:        #111418;
+  --surface:   #181c21;
+  --surface-2: #1d2228;
+  --surface-3: #252b32;
+  --canvas:    #0a0c0f;
+  --ink:       #e8eaed;
 
   /* Borders */
-  --border:    #dedede;
-  --border-2:  #bdbdbd;
+  --border:    #262d34;
+  --border-2:  #3a424c;
 
   /* Accent */
-  --accent:    #2457c5;
-  --accent-lo: rgba(36, 87, 197, 0.08);
-  --accent-md: rgba(36, 87, 197, 0.14);
+  --accent:    #4d7fe6;
+  --accent-lo: rgba(77, 127, 230, 0.10);
+  --accent-md: rgba(77, 127, 230, 0.20);
 
   /* Semantic */
-  --live:    #0f8f63;
-  --warn:    #a26013;
-  --danger:  #b4232a;
-  --success: #0f8f63;
+  --live:    #2dbf8a;
+  --warn:    #d49344;
+  --danger:  #e15b62;
+  --success: #2dbf8a;
 
   /* Threat levels */
-  --threat-low:    #0f8f63;
-  --threat-medium: #b88700;
-  --threat-high:   #b56317;
-  --threat-crit:   #b4232a;
+  --threat-low:    #2dbf8a;
+  --threat-medium: #e0b13a;
+  --threat-high:   #e08a3a;
+  --threat-crit:   #e15b62;
 
   /* Text */
-  --text-pri: #171717;
-  --text-sec: #646464;
-  --text-dim: #a0a0a0;
+  --text-pri: #e8eaed;
+  --text-sec: #9aa3ab;
+  --text-dim: #6b7480;
 
   /* Modality colors */
   --thermal-color: #c45124;
