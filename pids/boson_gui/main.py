@@ -20,6 +20,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -42,7 +43,7 @@ from camera import (
     list_video_devices,
     y16_to_celsius,
 )
-from fusion import Extrinsics, ThermalIntrinsics
+from fusion import Extrinsics, ThermalIntrinsics, rasterize_lidar_to_camera
 from lidar import CHANNELS, LidarFrame, OusterThread
 from pointcloud_window import PointCloudWindow
 from rf_window import RFWindow
@@ -260,6 +261,13 @@ class LidarPanel(QWidget):
         self.channel_combo.addItems(CHANNELS)
         self.channel_combo.setCurrentText("range")
         self.channel_combo.currentTextChanged.connect(self._redraw)
+        self.fov_check = QCheckBox("Match camera FOV")
+        self.fov_check.setToolTip(
+            "Reproject the lidar through the thermal camera's pinhole intrinsics so "
+            "this panel shows only the camera's field of view, pixel-aligned with "
+            "the thermal image. Set lens/extrinsics in the calibration window."
+        )
+        self.fov_check.toggled.connect(self._redraw)
         self.cloud_btn = QPushButton("Open 3D View")
         self.cloud_btn.clicked.connect(self._open_cloud)
         self.calib_btn = QPushButton("Open Calibration")
@@ -278,6 +286,7 @@ class LidarPanel(QWidget):
         ctl_box = QGroupBox("Display")
         df = QFormLayout()
         df.addRow("Channel:", self.channel_combo)
+        df.addRow(self.fov_check)
         df.addRow(self.cloud_btn)
         df.addRow(self.calib_btn)
         df.addRow(self.rf_btn)
@@ -338,12 +347,17 @@ class LidarPanel(QWidget):
     def _redraw(self) -> None:
         if self.last_frame is None:
             return
-        img = self.last_frame.channel(self.channel_combo.currentText())
+        channel = self.channel_combo.currentText()
+        img = self.last_frame.channel(channel)
         if img is None:
-            self.status_lbl.setText(
-                f"channel '{self.channel_combo.currentText()}' not available"
-            )
+            self.status_lbl.setText(f"channel '{channel}' not available")
             return
+        if self.fov_check.isChecked() and self.last_frame.xyz is not None:
+            reproj = rasterize_lidar_to_camera(
+                self.last_frame.xyz, img, self.intr, self.extr
+            )
+            if reproj is not None:
+                img = reproj
         self.viewer.show_frame(img)
 
     def _open_cloud(self) -> None:
@@ -374,6 +388,8 @@ class LidarPanel(QWidget):
         self.intr = intr
         if self.cloud_window is not None:
             self.cloud_window.set_calibration(extr, intr)
+        if self.fov_check.isChecked():
+            self._redraw()
 
     def _open_rf(self) -> None:
         if self.rf_window is None:
