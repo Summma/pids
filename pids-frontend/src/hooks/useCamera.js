@@ -4,7 +4,7 @@ import { wsUrl, WS_PATHS } from '@/utils/wsConfig'
 
 export function useCamera(streamConfig) {
   const { connState, setOnMessage, send } = useWebSocket(wsUrl(WS_PATHS.camera, {}, streamConfig))
-  const [frame, setFrame] = useState({ src: '', w: 0, h: 0, seq: 0, ts: 0 })
+  const [frame, setFrame] = useState({ src: '', w: 0, h: 0, frameW: 0, frameH: 0, seq: 0, ts: 0, persons: [] })
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -21,8 +21,11 @@ export function useCamera(streamConfig) {
           src: `data:${env.mime ?? 'image/jpeg'};base64,${env.data}`,
           w: env.w ?? 0,
           h: env.h ?? 0,
+          frameW: env.frame_w ?? env.w ?? 0,
+          frameH: env.frame_h ?? env.h ?? 0,
           seq: env.seq ?? 0,
           ts: env.ts ?? 0,
+          persons: Array.isArray(env.persons) ? env.persons : [],
         })
       } catch {}
     })

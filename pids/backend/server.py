@@ -565,6 +565,8 @@ class CameraStreamer:
                 raise RuntimeError("camera frame grab failed")
 
             num_persons = 0
+            persons: list[dict[str, Any]] = []
+            src_h, src_w = frame.shape[:2]
             if self._yolo is not None:
                 try:
                     results = self._yolo.predict(
@@ -575,7 +577,18 @@ class CameraStreamer:
                         verbose=False,
                     )
                     r0 = results[0]
-                    num_persons = int(len(r0.boxes)) if r0.boxes is not None else 0
+                    if r0.boxes is not None and len(r0.boxes) > 0:
+                        xyxy = r0.boxes.xyxy.cpu().numpy()
+                        confs = r0.boxes.conf.cpu().numpy()
+                        for box, conf in zip(xyxy, confs):
+                            persons.append({
+                                "bbox_xyxy": [
+                                    float(box[0]), float(box[1]),
+                                    float(box[2]), float(box[3]),
+                                ],
+                                "confidence": float(conf),
+                            })
+                    num_persons = len(persons)
                     frame = r0.plot()
                 except Exception as exc:
                     if not self._yolo_error:
@@ -593,11 +606,14 @@ class CameraStreamer:
                     "type": "frame",
                     "w": w,
                     "h": h,
+                    "frame_w": src_w,
+                    "frame_h": src_h,
                     "mime": "image/jpeg",
                     "data": base64.b64encode(encoded.tobytes()).decode("ascii"),
                     "seq": self.seq,
                     "ts": time.time(),
                     "num_persons": num_persons,
+                    "persons": persons,
                 },
                 separators=(",", ":"),
             )

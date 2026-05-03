@@ -89,11 +89,12 @@ export default function CalibrationPanel({
       cameraImage: cameraImageRef.current,
       lidarFrame: lidarData?.frameRef?.current,
       thermalFrame: thermalData?.frameRef?.current,
+      cameraFrame: cameraData?.frame,
       calibration: cal,
       channel,
     })
     setStats(rendered)
-  }, [cal, channel, lidarData?.meta?.seq, thermalData?.meta?.seq, cameraReadySeq, lidarData?.frameRef, thermalData?.frameRef])
+  }, [cal, channel, lidarData?.meta?.seq, thermalData?.meta?.seq, cameraReadySeq, cameraData?.frame?.seq, lidarData?.frameRef, thermalData?.frameRef])
 
   function commitCalibration(nextCalibration) {
     setCal(nextCalibration)
@@ -253,7 +254,7 @@ export default function CalibrationPanel({
   )
 }
 
-function renderCalibrationCanvas({ canvas, thermalCanvasRef, cameraImage, lidarFrame, thermalFrame, calibration, channel }) {
+function renderCalibrationCanvas({ canvas, thermalCanvasRef, cameraImage, lidarFrame, thermalFrame, cameraFrame, calibration, channel }) {
   const intr = calibration.intr
   const width = intr.width
   const height = intr.height
@@ -276,8 +277,64 @@ function renderCalibrationCanvas({ canvas, thermalCanvasRef, cameraImage, lidarF
 
   drawThermalFrame(ctx, thermalCanvasRef, thermalFrame, width, height, width, 0)
   drawCameraFrame(ctx, cameraImage, width, height, width * 2, 0, calibration)
+  drawPersonOverlay(ctx, cameraFrame, calibration, width, height)
   drawPanelLabels(ctx, width)
   return { projected: lidar.projected, points: lidar.points }
+}
+
+function drawPersonOverlay(ctx, cameraFrame, calibration, paneWidth, paneHeight) {
+  const persons = cameraFrame?.persons
+  if (!Array.isArray(persons) || persons.length === 0) return
+  const srcW = cameraFrame?.frameW || 0
+  const srcH = cameraFrame?.frameH || 0
+  if (srcW <= 0 || srcH <= 0) return
+
+  const intr = calibration.intr
+  const thermalHfov = 2 * Math.atan(intr.width / (2 * intr.fx))
+  const thermalVfov = 2 * Math.atan(intr.height / (2 * intr.fy))
+  const webcamHfov = degToRad(WEBCAM_HFOV_DEG)
+  const webcamFocalPx = (srcW / 2) / Math.tan(webcamHfov / 2)
+  const cropW = Math.min(srcW, 2 * webcamFocalPx * Math.tan(thermalHfov / 2))
+  const cropH = Math.min(srcH, 2 * webcamFocalPx * Math.tan(thermalVfov / 2))
+  const sx = (srcW - cropW) / 2
+  const sy = (srcH - cropH) / 2
+
+  // Lidar pane (dx=0) and Thermal pane (dx=paneWidth) both fill the pane with
+  // content subtending the thermal FOV, so the cropped webcam region maps
+  // directly to (dx, 0) -> (dx + paneWidth, paneHeight).
+  ctx.lineWidth = 2.5
+  ctx.font = '700 13px sans-serif'
+  ctx.textBaseline = 'top'
+
+  for (const person of persons) {
+    const box = person?.bbox_xyxy
+    if (!Array.isArray(box) || box.length < 4) continue
+    const conf = Number(person.confidence ?? 0)
+    const label = `person ${conf.toFixed(2)}`
+
+    // Project box from webcam pixel coords -> cropped region -> pane fraction.
+    const fx1 = (box[0] - sx) / cropW
+    const fy1 = (box[1] - sy) / cropH
+    const fx2 = (box[2] - sx) / cropW
+    const fy2 = (box[3] - sy) / cropH
+    if (fx2 <= 0 || fy2 <= 0 || fx1 >= 1 || fy1 >= 1) continue
+
+    for (const dx of [0, paneWidth]) {
+      const x1 = dx + Math.max(0, fx1) * paneWidth
+      const y1 = Math.max(0, fy1) * paneHeight
+      const x2 = dx + Math.min(1, fx2) * paneWidth
+      const y2 = Math.min(1, fy2) * paneHeight
+      ctx.strokeStyle = 'rgba(77, 191, 255, 0.95)'
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1)
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'
+      const labelW = ctx.measureText(label).width + 8
+      const labelH = 16
+      const labelY = Math.max(0, y1 - labelH)
+      ctx.fillRect(x1, labelY, labelW, labelH)
+      ctx.fillStyle = '#ffffff'
+      ctx.fillText(label, x1 + 4, labelY + 1)
+    }
+  }
 }
 
 function synthesizeLidarView(frame, calibration, channel) {
