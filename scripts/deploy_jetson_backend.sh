@@ -5,6 +5,19 @@ TARGET="${1:-cask-02@10.1.63.30}"
 REMOTE_DIR="${2:-~/narya/pids}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Pull origin/main first so this deploy can't accidentally stomp commits
+# that landed on origin while the local branch lagged. Skip with
+# DEPLOY_SKIP_PULL=1 if you really intend to deploy your local-only state.
+if [[ "${DEPLOY_SKIP_PULL:-0}" != "1" ]]; then
+  if git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo ">> git pull --ff-only origin main (set DEPLOY_SKIP_PULL=1 to bypass)"
+    if ! git -C "$ROOT_DIR" pull --ff-only origin main; then
+      echo "ERROR: pull failed (likely a divergent local main). Rebase or set DEPLOY_SKIP_PULL=1." >&2
+      exit 1
+    fi
+  fi
+fi
+
 rsync -az --delete \
   --exclude ".git" \
   --exclude ".venv*" \
