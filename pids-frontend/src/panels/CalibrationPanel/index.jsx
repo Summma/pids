@@ -538,15 +538,27 @@ function drawCameraFrame(ctx, cameraImage, paneWidth, paneHeight, dx, dy, calibr
   sx = Math.max(0, Math.min(srcW - cropW, sx))
   sy = Math.max(0, Math.min(srcH - cropH, sy))
 
-  const scale = Math.min(paneWidth / cropW, paneHeight / cropH)
+  const fitScale = Math.min(paneWidth / cropW, paneHeight / cropH)
+  // Roll: rotate the canvas around the pane center, clipped so we never
+  // draw outside the camera pane. Overscale the drawn rect so the rotated
+  // image fully covers the upright pane (no tilted black wedges at the
+  // corners) — required half-extents come from projecting the pane
+  // corners onto the rotated frame.
+  const rollDeg = rot.rollDeg || 0
+  const rollRad = degToRad(rollDeg)
+  const cosA = Math.abs(Math.cos(rollRad))
+  const sinA = Math.abs(Math.sin(rollRad))
+  let scale = fitScale
+  if (rollDeg !== 0) {
+    const minDrawW = paneWidth * cosA + paneHeight * sinA
+    const minDrawH = paneWidth * sinA + paneHeight * cosA
+    const coverScale = Math.max(minDrawW / cropW, minDrawH / cropH)
+    scale = Math.max(fitScale, coverScale)
+  }
   const drawW = cropW * scale
   const drawH = cropH * scale
   const offsetX = dx + (paneWidth - drawW) / 2
   const offsetY = dy + (paneHeight - drawH) / 2
-
-  // Roll: rotate the canvas around the pane center, clipped so we never
-  // draw outside the camera pane.
-  const rollDeg = rot.rollDeg || 0
   ctx.save()
   ctx.beginPath()
   ctx.rect(dx, dy, paneWidth, paneHeight)
