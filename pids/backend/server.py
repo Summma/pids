@@ -77,6 +77,8 @@ DETECTION_MODE_LABELS = {
     "pointpillars": "PointPillars",
     "auto": "Auto fusion",
 }
+LIDAR_MIN_POINTS = 1_000
+LIDAR_MAX_POINTS = 131_072
 
 SCENE_ANALYST_INSTRUCTION = """You are Narya's scene analyst. Use the current lidar/thermal 3D render, visible camera frame, and structured detector metadata to answer the operator's question.
 
@@ -249,13 +251,13 @@ class LidarStreamer:
         frame_bytes, _points, _intensities = self.read_binary_frame()
         return frame_bytes
 
-    def read_binary_frame(self) -> tuple[bytes, np.ndarray, np.ndarray]:
+    def read_binary_frame(self, max_points: Optional[int] = None) -> tuple[bytes, np.ndarray, np.ndarray]:
         if self.scans is None or self.xyz_lut is None:
             self.open()
 
         scan = self._next_scan()
         points, intensities = self._extract_points(scan)
-        payload, n = pack_lidar_binary(points, intensities, self.max_points)
+        payload, n = pack_lidar_binary(points, intensities, clamp_lidar_max_points(max_points, self.max_points))
         self.seq += 1
         header = struct.pack("<4sIIId", b"PCLD", 1, self.seq, n, time.time())
         return header + payload, points, intensities
@@ -783,6 +785,14 @@ def pack_lidar_binary(points: np.ndarray, intensities: np.ndarray, max_points: i
     out[:, 0:3] = points[:n]
     out[:, 3] = intensities[:n]
     return out.tobytes(), n
+
+
+def clamp_lidar_max_points(value: Optional[int], default: int) -> int:
+    try:
+        points = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        points = int(default)
+    return max(LIDAR_MIN_POINTS, min(points, LIDAR_MAX_POINTS))
 
 
 KITTI_CLASS_NAMES = ("Car", "Pedestrian", "Cyclist")
@@ -1658,12 +1668,13 @@ async def lidar_ws(request: web.Request) -> web.WebSocketResponse:
     lidar: LidarStreamer = request.app["lidar_streamer"]
     detector = get_detection_engine(request.app, request.query.get("mode"))
     thermal: ThermalCamera = request.app["thermal_camera"]
+    max_points = clamp_lidar_max_points(request.query.get("max_points"), lidar.max_points)
     ws = web.WebSocketResponse(heartbeat=15)
     await ws.prepare(request)
 
     try:
         while not ws.closed:
-            frame_bytes, points, intensities = await asyncio.to_thread(lidar.read_binary_frame)
+            frame_bytes, points, intensities = await asyncio.to_thread(lidar.read_binary_frame, max_points)
             await ws.send_bytes(frame_bytes)
             detections = await asyncio.to_thread(detector.maybe_process, points, intensities, thermal.last_packet)
             await ws.send_json({"type": "detections", **detections})
@@ -1755,6 +1766,8 @@ async def health(request: web.Request) -> web.Response:
             "thermal_device": thermal.device,
             "lidar_configured": bool(lidar.host),
             "lidar_host": lidar.host,
+            "lidar_default_max_points": lidar.max_points,
+            "lidar_max_points_limit": LIDAR_MAX_POINTS,
             "camera_configured": camera.device is not None,
             "camera_device": camera.device,
             "detection_mode": detector.mode,

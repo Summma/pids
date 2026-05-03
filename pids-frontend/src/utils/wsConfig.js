@@ -6,6 +6,7 @@ const defaultHost = window.location.hostname || 'localhost'
 const envHost = import.meta.env.VITE_PIDS_HOST
 const envPort = import.meta.env.VITE_PIDS_PORT
 const envDetectionMode = import.meta.env.VITE_PIDS_DETECTION_MODE
+const envLidarMaxPoints = import.meta.env.VITE_PIDS_LIDAR_MAX_POINTS
 
 export const DETECTION_MODE_OPTIONS = [
   {
@@ -30,9 +31,17 @@ export const DETECTION_MODE_OPTIONS = [
   },
 ]
 
+export const LIDAR_POINT_OPTIONS = [
+  { value: 30000, label: '30,000' },
+  { value: 60000, label: '60,000' },
+  { value: 90000, label: '90,000' },
+  { value: 120000, label: '120,000' },
+]
+
 export let HOST = envHost ?? stored.host ?? defaultHost
 export let PORT = Number(envPort ?? stored.port ?? 9090)
 export let DETECTION_MODE = normalizeDetectionMode(envDetectionMode ?? stored.detectionMode ?? 'auto')
+export let LIDAR_MAX_POINTS = normalizeLidarMaxPoints(envLidarMaxPoints ?? stored.lidarMaxPoints ?? 60000)
 
 export function getWsBase() { return `ws://${HOST}:${PORT}` }
 export function getHttpBase() {
@@ -60,16 +69,19 @@ export function wsUrl(path, params = {}) {
 
 export function apiUrl(path) { return `${getHttpBase()}${path}` }
 
-export function saveConfig(host, port, detectionMode = DETECTION_MODE) {
+export function saveConfig(host, port, detectionMode = DETECTION_MODE, lidarMaxPoints = LIDAR_MAX_POINTS) {
   const normalizedDetectionMode = normalizeDetectionMode(detectionMode)
+  const normalizedLidarMaxPoints = normalizeLidarMaxPoints(lidarMaxPoints)
   HOST = host
   PORT = port
   DETECTION_MODE = normalizedDetectionMode
+  LIDAR_MAX_POINTS = normalizedLidarMaxPoints
   try {
     localStorage.setItem('pids_cfg', JSON.stringify({
       host,
       port,
       detectionMode: normalizedDetectionMode,
+      lidarMaxPoints: normalizedLidarMaxPoints,
     }))
   } catch {}
 }
@@ -77,4 +89,12 @@ export function saveConfig(host, port, detectionMode = DETECTION_MODE) {
 export function normalizeDetectionMode(value) {
   const mode = String(value ?? '').trim()
   return DETECTION_MODE_OPTIONS.some(option => option.value === mode) ? mode : 'auto'
+}
+
+export function normalizeLidarMaxPoints(value) {
+  const points = Number(value)
+  if (!Number.isFinite(points)) return 60000
+  const rounded = Math.round(points)
+  const clamped = Math.max(1000, Math.min(rounded, 131072))
+  return LIDAR_POINT_OPTIONS.some(option => option.value === clamped) ? clamped : 60000
 }

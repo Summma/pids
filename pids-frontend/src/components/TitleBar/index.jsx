@@ -1,5 +1,13 @@
 import { useState } from 'react'
-import { saveConfig, HOST, PORT, DETECTION_MODE, DETECTION_MODE_OPTIONS } from '@/utils/wsConfig'
+import {
+  saveConfig,
+  HOST,
+  PORT,
+  DETECTION_MODE,
+  DETECTION_MODE_OPTIONS,
+  LIDAR_MAX_POINTS,
+  LIDAR_POINT_OPTIONS,
+} from '@/utils/wsConfig'
 import styles from './TitleBar.module.css'
 
 export default function TitleBar({
@@ -12,6 +20,7 @@ export default function TitleBar({
   const [host, setHost] = useState(HOST)
   const [port, setPort] = useState(PORT)
   const [detectionMode, setDetectionMode] = useState(DETECTION_MODE)
+  const [lidarMaxPoints, setLidarMaxPoints] = useState(LIDAR_MAX_POINTS)
 
   const goHome = () => {
     setShowSettings(false)
@@ -24,7 +33,7 @@ export default function TitleBar({
   }
 
   const applySettings = () => {
-    saveConfig(host, Number(port), detectionMode)
+    saveConfig(host, Number(port), detectionMode, lidarMaxPoints)
     setShowSettings(false)
     window.location.reload()
   }
@@ -99,6 +108,21 @@ export default function TitleBar({
             >
               {DETECTION_MODE_OPTIONS.map(option => (
                 <option key={option.value} value={option.value} title={option.title}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.settingsRow}>
+            <label className={styles.settingsLabel}>Points</label>
+            <select
+              className={styles.settingsSelect}
+              value={lidarMaxPoints}
+              onChange={e => setLidarMaxPoints(Number(e.target.value))}
+              title="Maximum lidar points sent to this browser per frame"
+            >
+              {LIDAR_POINT_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
               ))}
