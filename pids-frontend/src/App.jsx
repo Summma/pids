@@ -46,6 +46,8 @@ export default function App() {
   const [displayConfig, setDisplayConfig] = useState(INITIAL_DISPLAY_CONFIG)
   const [analystMessages, setAnalystMessages] = useState([])
   const [analystBusy, setAnalystBusy] = useState(false)
+  const [backgroundBusy, setBackgroundBusy] = useState(false)
+  const [backgroundMessage, setBackgroundMessage] = useState('')
   const worldRef = useRef(null)
   const cameraRef = useRef(null)
 
@@ -82,6 +84,28 @@ export default function App() {
     )
     setStreamConfig(streamFromSaved(saved))
     setDisplayConfig(displayFromSaved(saved))
+  }
+
+  async function updateLidarBackground(action) {
+    if (backgroundBusy) return
+    setBackgroundBusy(true)
+    setBackgroundMessage('')
+    try {
+      const response = await fetch(apiUrl('/lidar/background', streamConfig), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || `background request failed (${response.status})`)
+      }
+      setBackgroundMessage(data.message || '')
+    } catch (err) {
+      setBackgroundMessage(err?.message || 'background request failed')
+    } finally {
+      setBackgroundBusy(false)
+    }
   }
 
   async function askSceneAnalyst(message) {
@@ -152,6 +176,11 @@ export default function App() {
         displayConfig={displayConfig}
         onStreamSettingsChange={applyStreamSettings}
         onDisplaySettingsChange={applyDisplaySettings}
+        lidarBackground={lidar.backgroundMeta}
+        backgroundBusy={backgroundBusy}
+        backgroundMessage={backgroundMessage}
+        onCaptureLidarBackground={() => updateLidarBackground('capture')}
+        onClearLidarBackground={() => updateLidarBackground('clear')}
         onGoHome={() => setShowCal(false)}
         onOpenCalibration={() => setShowCal(open => !open)}
       />
@@ -265,6 +294,7 @@ function sceneSnapshot(lidar, thermal, camera) {
       seq: lidar.meta?.seq ?? 0,
       ts: lidar.meta?.ts ?? 0,
       detection_meta: lidar.detectionMeta ?? {},
+      background: lidar.backgroundMeta ?? {},
       detections: Array.isArray(lidar.detections) ? lidar.detections.slice(0, 32) : [],
     },
     thermal: {

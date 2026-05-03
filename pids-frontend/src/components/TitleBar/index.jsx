@@ -25,8 +25,13 @@ export default function TitleBar({
     thermalPalette: THERMAL_PALETTE,
     showThermalFov: SHOW_THERMAL_FOV,
   },
+  lidarBackground = null,
+  backgroundBusy = false,
+  backgroundMessage = '',
   onStreamSettingsChange,
   onDisplaySettingsChange,
+  onCaptureLidarBackground,
+  onClearLidarBackground,
   onGoHome,
   onOpenCalibration,
 }) {
@@ -176,6 +181,30 @@ export default function TitleBar({
               ))}
             </select>
           </div>
+          <div className={styles.settingsTitle}>Background</div>
+          <div className={styles.settingsButtonRow}>
+            <button
+              type="button"
+              className={styles.settingsSecondary}
+              onClick={onCaptureLidarBackground}
+              disabled={backgroundBusy}
+              title="Capture the current lidar room state and subtract it before detector inference"
+            >
+              Capture room
+            </button>
+            <button
+              type="button"
+              className={styles.settingsSecondary}
+              onClick={onClearLidarBackground}
+              disabled={backgroundBusy || !lidarBackground?.hasSnapshot}
+              title="Disable background subtraction and clear the stored room snapshot"
+            >
+              Clear
+            </button>
+          </div>
+          <div className={styles.settingsNote}>
+            {backgroundStatusText(lidarBackground, backgroundMessage)}
+          </div>
           <div className={styles.settingsTitle}>Display</div>
           <div className={styles.settingsRow}>
             <label className={styles.settingsLabel}>Thermal palette</label>
@@ -212,6 +241,16 @@ export default function TitleBar({
       )}
     </>
   )
+}
+
+function backgroundStatusText(background, message) {
+  if (background?.pendingCapture) return 'Waiting for the next lidar frame to capture.'
+  if (!background?.hasSnapshot) return message || 'No room snapshot. Detector uses the full point cloud.'
+  const foreground = Math.round(background.lastForegroundPoints || 0).toLocaleString()
+  const original = Math.round(background.lastOriginalPoints || 0).toLocaleString()
+  const removedPct = Math.round((background.lastRemovedFraction || 0) * 100)
+  const mode = background.enabled ? 'enabled' : 'stored, disabled'
+  return `Snapshot ${mode}. Detector foreground ${foreground}/${original}; ${removedPct}% removed.`
 }
 
 function CalibrationIcon() {

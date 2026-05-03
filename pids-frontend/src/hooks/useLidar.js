@@ -20,6 +20,7 @@ export function useLidar(streamConfig = {}) {
   const [clusters, setClusters] = useState([])
   const [detections, setDetections] = useState([])
   const [detectionMeta, setDetectionMeta] = useState({ status: 'waiting for detector', source: '', elapsedMs: 0, ts: 0 })
+  const [backgroundMeta, setBackgroundMeta] = useState(normalizeBackgroundMeta())
 
   useEffect(() => {
     setOnMessage((e) => {
@@ -32,6 +33,7 @@ export function useLidar(streamConfig = {}) {
         const env = JSON.parse(e.data)
         if (env.type === 'detections') {
           const source = env.source ?? env.mode ?? ''
+          setBackgroundMeta(normalizeBackgroundMeta(env.background))
           setDetections(Array.isArray(env.boxes)
             ? env.boxes.map(box => ({ source, mode: env.mode ?? '', ...box }))
             : [])
@@ -45,6 +47,10 @@ export function useLidar(streamConfig = {}) {
           })
           return
         }
+        if (env.type === 'background') {
+          setBackgroundMeta(normalizeBackgroundMeta(env.background))
+          return
+        }
         if (env.type !== 'frame') return
 
         readJsonFrame(env, frameRef, setMeta)
@@ -55,7 +61,23 @@ export function useLidar(streamConfig = {}) {
 
   const sendControl = (cmd) => send(JSON.stringify(cmd))
 
-  return { connState, frameRef, meta, clusters, detections, detectionMeta, sendControl }
+  return { connState, frameRef, meta, clusters, detections, detectionMeta, backgroundMeta, sendControl }
+}
+
+function normalizeBackgroundMeta(value = {}) {
+  return {
+    enabled: Boolean(value.enabled),
+    hasSnapshot: Boolean(value.has_snapshot ?? value.hasSnapshot),
+    pendingCapture: Boolean(value.pending_capture ?? value.pendingCapture),
+    voxelSizeM: Number(value.voxel_size_m ?? value.voxelSizeM ?? 0),
+    snapshotPoints: Number(value.snapshot_points ?? value.snapshotPoints ?? 0),
+    snapshotVoxels: Number(value.snapshot_voxels ?? value.snapshotVoxels ?? 0),
+    capturedTs: Number(value.captured_ts ?? value.capturedTs ?? 0),
+    lastOriginalPoints: Number(value.last_original_points ?? value.lastOriginalPoints ?? 0),
+    lastForegroundPoints: Number(value.last_foreground_points ?? value.lastForegroundPoints ?? 0),
+    lastRemovedPoints: Number(value.last_removed_points ?? value.lastRemovedPoints ?? 0),
+    lastRemovedFraction: Number(value.last_removed_fraction ?? value.lastRemovedFraction ?? 0),
+  }
 }
 
 function readBinaryFrame(buffer, frameRef, setMeta, setClusters) {

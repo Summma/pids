@@ -170,6 +170,13 @@
   accent-color: var(--ink);
 }
 
+.settingsButtonRow {
+  display: grid;
+  grid-template-columns: 1fr 74px;
+  gap: 8px;
+  padding: 5px 0;
+}
+
 .settingsLabel {
   font-size: 11px;
   color: var(--text-sec);
@@ -224,6 +231,31 @@
   background: var(--surface-2);
   border-color: var(--border);
   color: var(--text-dim);
+}
+
+.settingsSecondary {
+  min-width: 0;
+  padding: 8px 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-pri);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.settingsSecondary:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.settingsSecondary:disabled {
+  cursor: default;
+  color: var(--text-dim);
+  border-color: var(--border);
+  background: var(--surface-2);
 }
 
 @media (max-width: 720px) {

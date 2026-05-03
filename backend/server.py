@@ -106,6 +106,8 @@ POINTPILLARS_DETECTION_MODES = {"pointpillars", "auto", "roi_thermal", "seated_r
 LIDAR_MIN_POINTS = 1_000
 LIDAR_MAX_POINTS = 131_072
 MAX_LIDAR_WS_BUFFER_BYTES = 3_000_000
+BACKGROUND_VOXEL_SIZE_M = 0.12
+BACKGROUND_VOXEL_DILATION = 1
 
 SCENE_ANALYST_INSTRUCTION = """You are Narya's scene analyst. Use the current lidar/thermal 3D render, visible camera frame, and structured detector metadata to answer the operator's question.
 
@@ -338,6 +340,157 @@ class LidarStreamer:
                 intensity = np.zeros_like(intensity)
 
         return xyz, intensity
+
+
+class LidarBackgroundSubtractor:
+    def __init__(self, voxel_size_m: float, dilation: int) -> None:
+        self.voxel_size_m = max(float(voxel_size_m), 0.02)
+        self.dilation = max(0, int(dilation))
+        self._lock = threading.Lock()
+        self._capture_requested = False
+        self._enabled = False
+        self._voxels = np.empty(0, dtype=np.int64)
+        self._captured_points = 0
+        self._captured_ts = 0.0
+        self._last_original_points = 0
+        self._last_foreground_points = 0
+        self._last_removed_points = 0
+
+    def request_capture(self) -> dict:
+        with self._lock:
+            self._capture_requested = True
+            self._enabled = True
+            return self.status_locked()
+
+    def clear(self) -> dict:
+        with self._lock:
+            self._capture_requested = False
+            self._enabled = False
+            self._voxels = np.empty(0, dtype=np.int64)
+            self._captured_points = 0
+            self._captured_ts = 0.0
+            self._last_original_points = 0
+            self._last_foreground_points = 0
+            self._last_removed_points = 0
+            return self.status_locked()
+
+    def set_enabled(self, enabled: bool) -> dict:
+        with self._lock:
+            self._enabled = bool(enabled) and len(self._voxels) > 0
+            return self.status_locked()
+
+    def capture_if_requested(self, points: np.ndarray) -> bool:
+        with self._lock:
+            if not self._capture_requested:
+                return False
+            self._capture_requested = False
+        self.capture(points)
+        return True
+
+    def capture(self, points: np.ndarray) -> dict:
+        pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+        finite = np.isfinite(pts).all(axis=1)
+        pts = pts[finite]
+        voxels = self._encode_voxels(pts, dilate=True)
+        captured_ts = time.time()
+        with self._lock:
+            self._voxels = voxels
+            self._captured_points = int(len(pts))
+            self._captured_ts = captured_ts
+            self._enabled = len(voxels) > 0
+            self._last_original_points = 0
+            self._last_foreground_points = 0
+            self._last_removed_points = 0
+            return self.status_locked()
+
+    def filter_for_detection(
+        self,
+        points: np.ndarray,
+        intensities: Optional[np.ndarray],
+    ) -> tuple[np.ndarray, Optional[np.ndarray], dict]:
+        pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+        vals = None if intensities is None else np.asarray(intensities).reshape(-1)
+        with self._lock:
+            enabled = self._enabled and len(self._voxels) > 0
+            voxels = self._voxels.copy() if enabled else None
+            pending = self._capture_requested
+
+        original = int(len(pts))
+        if not enabled or voxels is None:
+            status = self._update_last_filter(original, original, 0)
+            status["pending_capture"] = pending
+            return pts, vals, status
+
+        live_voxels = self._encode_voxels(pts, dilate=False)
+        background_hit = np.isin(live_voxels, voxels, assume_unique=False)
+        keep = ~background_hit
+        filtered_points = pts[keep]
+        filtered_intensities = vals[keep] if vals is not None and len(vals) == len(pts) else vals
+        removed = int(np.count_nonzero(background_hit))
+        status = self._update_last_filter(original, int(len(filtered_points)), removed)
+        status["pending_capture"] = pending
+        return filtered_points, filtered_intensities, status
+
+    def status(self) -> dict:
+        with self._lock:
+            return self.status_locked()
+
+    def status_locked(self) -> dict:
+        removed_fraction = (
+            self._last_removed_points / max(self._last_original_points, 1)
+            if self._last_original_points
+            else 0.0
+        )
+        return {
+            "enabled": bool(self._enabled and len(self._voxels) > 0),
+            "has_snapshot": bool(len(self._voxels) > 0),
+            "pending_capture": bool(self._capture_requested),
+            "voxel_size_m": self.voxel_size_m,
+            "voxel_dilation": self.dilation,
+            "snapshot_points": int(self._captured_points),
+            "snapshot_voxels": int(len(self._voxels)),
+            "captured_ts": float(self._captured_ts),
+            "last_original_points": int(self._last_original_points),
+            "last_foreground_points": int(self._last_foreground_points),
+            "last_removed_points": int(self._last_removed_points),
+            "last_removed_fraction": float(removed_fraction),
+        }
+
+    def _update_last_filter(self, original: int, foreground: int, removed: int) -> dict:
+        with self._lock:
+            self._last_original_points = int(original)
+            self._last_foreground_points = int(foreground)
+            self._last_removed_points = int(removed)
+            return self.status_locked()
+
+    def _encode_voxels(self, points: np.ndarray, *, dilate: bool) -> np.ndarray:
+        if len(points) == 0:
+            return np.empty(0, dtype=np.int64)
+        q = np.floor(points / self.voxel_size_m).astype(np.int64, copy=False)
+        if dilate and self.dilation > 0:
+            offsets = np.array(
+                [
+                    [dx, dy, dz]
+                    for dx in range(-self.dilation, self.dilation + 1)
+                    for dy in range(-self.dilation, self.dilation + 1)
+                    for dz in range(-self.dilation, self.dilation + 1)
+                ],
+                dtype=np.int64,
+            )
+            q = (q[:, None, :] + offsets[None, :, :]).reshape(-1, 3)
+        keys = pack_voxel_keys(q)
+        return np.unique(keys) if dilate else keys
+
+
+def pack_voxel_keys(q: np.ndarray) -> np.ndarray:
+    offset = np.int64(1 << 20)
+    mask = np.int64((1 << 21) - 1)
+    shifted = q + offset
+    return (
+        ((shifted[:, 0] & mask) << np.int64(42))
+        | ((shifted[:, 1] & mask) << np.int64(21))
+        | (shifted[:, 2] & mask)
+    ).astype(np.int64, copy=False)
 
 
 class CameraStreamer:
@@ -2036,6 +2189,62 @@ def websocket_backpressured(request: web.Request, limit_bytes: int) -> bool:
         return False
 
 
+def process_detection_with_background(
+    detector: DetectionEngine,
+    background: LidarBackgroundSubtractor,
+    points: np.ndarray,
+    intensities: Optional[np.ndarray],
+    thermal_packet: Optional[ThermalPacket],
+) -> dict:
+    det_points, det_intensities, background_status = background.filter_for_detection(points, intensities)
+    result = dict(detector.maybe_process(det_points, det_intensities, thermal_packet))
+    result["background"] = background_status
+    if background_status.get("enabled"):
+        original = int(background_status.get("last_original_points", 0))
+        foreground = int(background_status.get("last_foreground_points", 0))
+        removed = int(background_status.get("last_removed_points", 0))
+        suffix = f"background subtraction {foreground}/{original} foreground, {removed} removed"
+        status = str(result.get("status") or "")
+        result["status"] = f"{status} | {suffix}" if status else suffix
+    return result
+
+
+async def lidar_background(request: web.Request) -> web.Response:
+    background: LidarBackgroundSubtractor = request.app["lidar_background"]
+    lidar: LidarStreamer = request.app["lidar_streamer"]
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        payload = {}
+
+    action = str(payload.get("action") or "capture").strip().lower()
+    if action in ("capture", "snapshot", "take_snapshot"):
+        max_points = clamp_lidar_max_points(payload.get("max_points"), lidar.max_points)
+        try:
+            _frame_bytes, points, _intensities = await asyncio.wait_for(
+                asyncio.to_thread(lidar.read_binary_frame, max_points),
+                timeout=35.0,
+            )
+            status = await asyncio.to_thread(background.capture, points)
+            message = "background captured from current lidar frame"
+        except Exception as exc:
+            status = background.request_capture()
+            message = f"background capture queued; direct capture did not finish: {exc}"
+    elif action in ("clear", "reset"):
+        status = background.clear()
+        message = "background snapshot cleared"
+    elif action in ("enable", "enabled"):
+        status = background.set_enabled(bool(payload.get("enabled", True)))
+        message = "background subtraction enabled" if status.get("enabled") else "background subtraction disabled"
+    elif action in ("status", ""):
+        status = background.status()
+        message = "background status"
+    else:
+        return web.json_response({"ok": False, "error": f"unknown background action: {action}"}, status=400)
+
+    return web.json_response({"ok": True, "message": message, "background": status})
+
+
 async def thermal_ws(request: web.Request) -> web.WebSocketResponse:
     camera: ThermalCamera = request.app["thermal_camera"]
     calibration: dict[str, Any] = request.app.get("thermal_calibration", THERMAL_CALIBRATION)
@@ -2075,29 +2284,37 @@ async def lidar_ws(request: web.Request) -> web.WebSocketResponse:
     lidar: LidarStreamer = request.app["lidar_streamer"]
     detector = get_detection_engine(request.app, request.query.get("mode"))
     thermal: ThermalCamera = request.app["thermal_camera"]
+    background: LidarBackgroundSubtractor = request.app["lidar_background"]
     max_points = clamp_lidar_max_points(request.query.get("max_points"), lidar.max_points)
     ws = web.WebSocketResponse(heartbeat=15, compress=False)
     await ws.prepare(request)
 
     detector_task: Optional[asyncio.Task] = None
     latest_detections = detector.latest_result()
+    latest_background = background.status()
     try:
         while not ws.closed:
             frame_bytes, points, intensities = await asyncio.to_thread(lidar.read_binary_frame, max_points)
+            if await asyncio.to_thread(background.capture_if_requested, points):
+                latest_background = background.status()
+
             if not websocket_backpressured(request, MAX_LIDAR_WS_BUFFER_BYTES):
                 await ws.send_bytes(frame_bytes)
 
             if detector_task is not None and detector_task.done():
                 try:
                     latest_detections = detector_task.result()
+                    latest_background = latest_detections.get("background", latest_background)
                 except Exception as exc:
                     latest_detections = detector._empty(f"detector task error: {exc}")
+                    latest_background = background.status()
                 detector_task = None
 
             await ws.send_json(
                 {
                     "type": "detections",
                     **latest_detections,
+                    "background": latest_background,
                     "detector_busy": detector_task is not None,
                 }
             )
@@ -2108,7 +2325,9 @@ async def lidar_ws(request: web.Request) -> web.WebSocketResponse:
                 thermal_packet = thermal.last_packet
                 detector_task = asyncio.create_task(
                     asyncio.to_thread(
-                        detector.maybe_process,
+                        process_detection_with_background,
+                        detector,
+                        background,
                         points_for_detection,
                         intensities_for_detection,
                         thermal_packet,
@@ -2187,6 +2406,7 @@ async def gemini_chat(request: web.Request) -> web.Response:
 async def health(request: web.Request) -> web.Response:
     thermal: ThermalCamera = request.app["thermal_camera"]
     lidar: LidarStreamer = request.app["lidar_streamer"]
+    background: LidarBackgroundSubtractor = request.app["lidar_background"]
     camera: CameraStreamer = request.app["camera_streamer"]
     detector = get_detection_engine(request.app)
     gemini: GeminiSceneClient = request.app["gemini_client"]
@@ -2199,7 +2419,7 @@ async def health(request: web.Request) -> web.Response:
         {
             "ok": True,
             "service": "pids-backend",
-            "routes": ["/thermal", "/lidar", "/camera", "/gemini/chat"],
+            "routes": ["/thermal", "/lidar", "/lidar/background", "/camera", "/gemini/chat"],
             "serves_frontend": bool(static_dir),
             "frontend_static_dir": str(static_dir) if static_dir else "",
             "thermal_configured": thermal.device is not None and thermal.device >= 0,
@@ -2211,6 +2431,7 @@ async def health(request: web.Request) -> web.Response:
             "lidar_host": lidar.host,
             "lidar_default_max_points": lidar.max_points,
             "lidar_max_points_limit": LIDAR_MAX_POINTS,
+            "lidar_background": background.status(),
             "camera_configured": camera.device is not None,
             "camera_device": camera.device,
             "detection_mode": detector.mode,
@@ -2280,6 +2501,10 @@ def build_app(
         fps=lidar_fps,
         max_points=lidar_max_points,
     )
+    app["lidar_background"] = LidarBackgroundSubtractor(
+        voxel_size_m=BACKGROUND_VOXEL_SIZE_M,
+        dilation=BACKGROUND_VOXEL_DILATION,
+    )
     app["camera_streamer"] = CameraStreamer(
         device=camera_device,
         fps=camera_fps,
@@ -2308,6 +2533,7 @@ def build_app(
     app.router.add_get("/health", health)
     app.router.add_get("/thermal", thermal_ws)
     app.router.add_get("/lidar", lidar_ws)
+    app.router.add_post("/lidar/background", lidar_background)
     app.router.add_get("/camera", camera_ws)
     app.router.add_post("/gemini/chat", gemini_chat)
     static_dir = resolve_frontend_static_dir()
