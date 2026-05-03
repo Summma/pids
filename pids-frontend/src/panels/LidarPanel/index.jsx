@@ -2,7 +2,12 @@ import { useRef, useEffect, useState } from 'react'
 import PanelShell from '@/components/PanelShell'
 import styles from './LidarPanel.module.css'
 
-const CHANNELS   = ['range', 'signal', 'reflectivity', 'near-ir']
+const CHANNELS   = [
+  { key: 'range', label: 'RNG' },
+  { key: 'signal', label: 'SIG' },
+  { key: 'reflectivity', label: 'REFL' },
+  { key: 'near-ir', label: 'NIR' },
+]
 const RANGE_MAX  = 50   // metres
 const RING_COUNT = 4
 
@@ -135,15 +140,16 @@ export default function LidarPanel({ lidarData, onPopOut3D }) {
     <div className={styles.controls}>
       {CHANNELS.map(ch => (
         <button
-          key={ch}
-          className={`btn ${channel === ch ? 'active' : ''}`}
-          onClick={() => setChannel(ch)}
+          key={ch.key}
+          className={`btn ${channel === ch.key ? 'active' : ''}`}
+          onClick={() => setChannel(ch.key)}
+          title={ch.key}
         >
-          {ch.toUpperCase()}
+          {ch.label}
         </button>
       ))}
       {onPopOut3D && (
-        <button className="btn" onClick={onPopOut3D}>3D ⤢</button>
+        <button className="btn" onClick={onPopOut3D} title="Open 3D point cloud">3D</button>
       )}
     </div>
   )

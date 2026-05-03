@@ -18,20 +18,27 @@
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
   gap: 8px;
+  min-width: 0;
 }
 
 .headerLeft {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .headerRight {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 72%;
+  justify-content: flex-end;
+  overflow: hidden;
 }
 
 .title {
@@ -41,12 +48,16 @@
   color: var(--text-pri);
   text-transform: uppercase;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .subtitle {
   font-size: 10px;
   color: var(--text-sec);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .modalityDot {
@@ -70,6 +81,7 @@
   font-weight: 700;
   letter-spacing: 0.1em;
   border: 1px solid transparent;
+  flex-shrink: 0;
 }
 
 .live {

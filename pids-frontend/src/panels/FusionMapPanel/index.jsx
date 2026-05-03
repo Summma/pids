@@ -5,6 +5,11 @@ import styles from './FusionMapPanel.module.css'
 const WORLD_M = 60
 const GRID_STEP = 10
 const MAX_DRAW_PTS = 18000
+const LAYERS = [
+  { key: 'fusion', label: 'FUSE' },
+  { key: 'occupancy', label: 'OCC' },
+  { key: 'tracks', label: 'TRK' },
+]
 
 export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
   const { connState, frame, sendControl } = fusionData
@@ -74,17 +79,18 @@ export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
 
   const controls = (
     <div className={styles.controls}>
-      {['fusion', 'occupancy', 'tracks'].map(name => (
+      {LAYERS.map(item => (
         <button
-          key={name}
-          className={`btn ${layer === name ? 'active' : ''}`}
-          onClick={() => setLayer(name)}
+          key={item.key}
+          className={`btn ${layer === item.key ? 'active' : ''}`}
+          onClick={() => setLayer(item.key)}
+          title={item.key}
         >
-          {name.toUpperCase()}
+          {item.label}
         </button>
       ))}
       <button className={`btn ${follow ? 'active' : ''}`} onClick={() => setFollow(f => !f)}>
-        FOLLOW
+        FOL
       </button>
       <button className="btn" onClick={resetMap}>RESET</button>
     </div>

@@ -2,7 +2,14 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.controls :global(.btn) {
+  min-width: 30px;
+  padding-inline: 6px;
 }
 
 .viewport {
