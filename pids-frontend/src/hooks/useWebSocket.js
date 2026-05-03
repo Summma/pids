@@ -1,17 +1,19 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 
-export function useWebSocket(url) {
+export function useWebSocket(url, options = {}) {
   const wsRef       = useRef(null)
   const retryDelay  = useRef(1000)
   const retryTimer  = useRef(null)
   const onMsgRef    = useRef(null)
   const [connState, setConnState] = useState('connecting')
+  const binaryType = options.binaryType ?? 'blob'
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
     setConnState('connecting')
 
     const sock = new WebSocket(url)
+    sock.binaryType = binaryType
     wsRef.current = sock
 
     sock.onopen = () => {
@@ -27,7 +29,7 @@ export function useWebSocket(url) {
     }
     sock.onerror = () => setConnState('offline')  // browser logs the URL; no need to re-log here
     sock.onmessage = (e) => onMsgRef.current?.(e)
-  }, [url])
+  }, [url, binaryType])
 
   useEffect(() => {
     connect()
