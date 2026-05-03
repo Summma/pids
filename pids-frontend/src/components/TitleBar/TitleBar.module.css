@@ -1,0 +1,217 @@
+.bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--titlebar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: rgba(13, 21, 32, 0.96);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  z-index: 1000;
+  gap: 12px;
+  user-select: none;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+.divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+}
+
+.sysTitle {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--text-sec);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.version {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.threatAlert {
+  padding: 4px 14px;
+  background: rgba(255, 34, 68, 0.12);
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--danger);
+  animation: alertPulse 1s ease-in-out infinite;
+}
+
+@keyframes alertPulse {
+  0%, 100% { background: rgba(255, 34, 68, 0.12); }
+  50%       { background: rgba(255, 34, 68, 0.22); }
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sensorPills {
+  display: flex;
+  gap: 5px;
+}
+
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 10px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  border: 1px solid transparent;
+}
+
+.thermal {
+  color: var(--thermal-color);
+  border-color: var(--thermal-color);
+  background: rgba(255, 107, 53, 0.08);
+}
+.lidar {
+  color: var(--lidar-color);
+  border-color: var(--lidar-color);
+  background: rgba(0, 212, 255, 0.08);
+}
+.rf {
+  color: var(--rf-color);
+  border-color: var(--rf-color);
+  background: rgba(199, 125, 255, 0.08);
+}
+.pillOffline {
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+.pillDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pillDotLive {
+  animation: blink 2s ease-in-out infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.2; }
+}
+
+.iconBtn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-sec);
+  font-size: 14px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.iconBtn:hover {
+  color: var(--text-pri);
+  border-color: var(--border-2);
+  background: var(--surface-3);
+}
+
+/* Settings dropdown */
+.settingsDropdown {
+  position: fixed;
+  top: calc(var(--titlebar-h) + 6px);
+  right: 16px;
+  width: 280px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  z-index: 1100;
+  animation: dropIn 0.15s ease;
+}
+
+@keyframes dropIn {
+  from { transform: translateY(-6px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+.settingsTitle {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-sec);
+  margin-bottom: 12px;
+}
+
+.settingsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+}
+
+.settingsLabel {
+  font-size: 11px;
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+
+.settingsInput {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-pri);
+  font-size: 11px;
+  padding: 4px 8px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.settingsInput:focus { border-color: var(--accent); }
+
+.settingsApply {
+  width: 100%;
+  margin-top: 12px;
+  padding: 7px;
+  background: var(--accent-lo);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  transition: background 0.15s;
+}
+.settingsApply:hover { background: var(--accent-md); }
