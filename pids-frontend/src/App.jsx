@@ -72,11 +72,11 @@ export default function App() {
     thermal.meta?.calibration,
   ])
 
+  // YOLO is the sole object detector — drop the backend's 3D detections
+  // before they reach the world view, the object list, or the scene analyst.
   const lidarWithYolo = useMemo(() => ({
     ...lidar,
-    detections: yoloDetections.length
-      ? [...yoloDetections, ...(lidar.detections ?? [])]
-      : lidar.detections,
+    detections: yoloDetections,
   }), [lidar, yoloDetections])
 
   function selectObject(objectKey) {
@@ -149,7 +149,7 @@ export default function App() {
       const payload = {
         message: text,
         images: captureSceneImages(worldRef, cameraRef),
-        scene: sceneSnapshot(lidar, thermal, camera),
+        scene: sceneSnapshot(lidarWithYolo, thermal, camera),
       }
 
       const controller = new AbortController()
@@ -236,7 +236,7 @@ export default function App() {
               >
                 <WorldMapPanel
                   ref={worldRef}
-                  lidarData={lidar}
+                  lidarData={lidarWithYolo}
                   thermalData={thermal}
                   selectedObjectKey={selectedObjectKey}
                   thermalCalibrationOverride={thermalCalibrationOverride}
