@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useWebSocket } from './useWebSocket'
 import { wsUrl, WS_PATHS } from '@/utils/wsConfig'
 
-export function useThermal() {
-  const { connState, setOnMessage, send } = useWebSocket(wsUrl(WS_PATHS.thermal))
+export function useThermal(streamConfig) {
+  const { connState, setOnMessage, send } = useWebSocket(wsUrl(WS_PATHS.thermal, {}, streamConfig))
   const frameRef = useRef(null)   // { data: Uint8Array, w, h }
   const [meta, setMeta] = useState({ tMin: 0, tMax: 100, seq: 0, ts: 0, w: 640, h: 512, calibration: null })
   const [error, setError] = useState('')

@@ -1,26 +1,60 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  saveConfig,
   HOST,
   PORT,
   DETECTION_MODE,
   DETECTION_MODE_OPTIONS,
   LIDAR_MAX_POINTS,
   LIDAR_POINT_OPTIONS,
+  THERMAL_PALETTE,
+  THERMAL_PALETTE_OPTIONS,
+  SHOW_THERMAL_FOV,
 } from '@/utils/wsConfig'
 import styles from './TitleBar.module.css'
 
 export default function TitleBar({
   threatStats = { critical: 0 },
   calibrationActive = false,
+  streamConfig = {
+    host: HOST,
+    port: PORT,
+    detectionMode: DETECTION_MODE,
+    lidarMaxPoints: LIDAR_MAX_POINTS,
+  },
+  displayConfig = {
+    thermalPalette: THERMAL_PALETTE,
+    showThermalFov: SHOW_THERMAL_FOV,
+  },
+  onStreamSettingsChange,
+  onDisplaySettingsChange,
   onGoHome,
   onOpenCalibration,
 }) {
   const [showSettings, setShowSettings] = useState(false)
-  const [host, setHost] = useState(HOST)
-  const [port, setPort] = useState(PORT)
-  const [detectionMode, setDetectionMode] = useState(DETECTION_MODE)
-  const [lidarMaxPoints, setLidarMaxPoints] = useState(LIDAR_MAX_POINTS)
+  const [host, setHost] = useState(streamConfig.host)
+  const [port, setPort] = useState(streamConfig.port)
+  const [detectionMode, setDetectionMode] = useState(streamConfig.detectionMode)
+  const [lidarMaxPoints, setLidarMaxPoints] = useState(streamConfig.lidarMaxPoints)
+  const [thermalPalette, setThermalPalette] = useState(displayConfig.thermalPalette)
+  const [showThermalFov, setShowThermalFov] = useState(displayConfig.showThermalFov)
+
+  useEffect(() => {
+    setHost(streamConfig.host)
+    setPort(streamConfig.port)
+    setDetectionMode(streamConfig.detectionMode)
+    setLidarMaxPoints(streamConfig.lidarMaxPoints)
+  }, [streamConfig.host, streamConfig.port, streamConfig.detectionMode, streamConfig.lidarMaxPoints])
+
+  useEffect(() => {
+    setThermalPalette(displayConfig.thermalPalette)
+    setShowThermalFov(displayConfig.showThermalFov)
+  }, [displayConfig.thermalPalette, displayConfig.showThermalFov])
+
+  const streamChanged =
+    String(host).trim() !== String(streamConfig.host)
+    || Number(port) !== Number(streamConfig.port)
+    || detectionMode !== streamConfig.detectionMode
+    || Number(lidarMaxPoints) !== Number(streamConfig.lidarMaxPoints)
 
   const goHome = () => {
     setShowSettings(false)
@@ -32,10 +66,24 @@ export default function TitleBar({
     onOpenCalibration?.()
   }
 
-  const applySettings = () => {
-    saveConfig(host, Number(port), detectionMode, lidarMaxPoints)
+  const reconnectStreams = () => {
+    onStreamSettingsChange?.({
+      host: String(host).trim() || HOST,
+      port: Number(port),
+      detectionMode,
+      lidarMaxPoints: Number(lidarMaxPoints),
+    })
     setShowSettings(false)
-    window.location.reload()
+  }
+
+  const changeThermalPalette = (value) => {
+    setThermalPalette(value)
+    onDisplaySettingsChange?.({ thermalPalette: value, showThermalFov })
+  }
+
+  const changeShowThermalFov = (value) => {
+    setShowThermalFov(value)
+    onDisplaySettingsChange?.({ thermalPalette, showThermalFov: value })
   }
 
   return (
@@ -128,8 +176,37 @@ export default function TitleBar({
               ))}
             </select>
           </div>
-          <button className={styles.settingsApply} onClick={applySettings}>
-            Apply and reconnect
+          <div className={styles.settingsTitle}>Display</div>
+          <div className={styles.settingsRow}>
+            <label className={styles.settingsLabel}>Thermal palette</label>
+            <select
+              className={styles.settingsSelect}
+              value={thermalPalette}
+              onChange={e => changeThermalPalette(e.target.value)}
+              title="Palette used for projected thermal pixels in the 3D view"
+            >
+              {THERMAL_PALETTE_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className={styles.settingsCheckRow}>
+            <span className={styles.settingsLabel}>Show thermal FOV</span>
+            <input
+              type="checkbox"
+              checked={showThermalFov}
+              onChange={e => changeShowThermalFov(e.target.checked)}
+            />
+          </label>
+          <div className={styles.settingsNote}>Display changes apply immediately.</div>
+          <button
+            className={styles.settingsApply}
+            onClick={reconnectStreams}
+            disabled={!streamChanged}
+          >
+            Reconnect streams
           </button>
         </div>
       )}

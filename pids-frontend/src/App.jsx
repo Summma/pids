@@ -8,7 +8,16 @@ import CalibrationPanel from '@/panels/CalibrationPanel'
 import { useThermal }  from '@/hooks/useThermal'
 import { useLidar }    from '@/hooks/useLidar'
 import { useCamera }   from '@/hooks/useCamera'
-import { apiUrl } from '@/utils/wsConfig'
+import {
+  apiUrl,
+  saveConfig,
+  HOST,
+  PORT,
+  DETECTION_MODE,
+  LIDAR_MAX_POINTS,
+  THERMAL_PALETTE,
+  SHOW_THERMAL_FOV,
+} from '@/utils/wsConfig'
 import styles from './App.module.css'
 
 const SENSOR_VIEWS = [
@@ -16,23 +25,63 @@ const SENSOR_VIEWS = [
   { key: 'camera', label: 'Camera' },
 ]
 
+const INITIAL_STREAM_CONFIG = {
+  host: HOST,
+  port: PORT,
+  detectionMode: DETECTION_MODE,
+  lidarMaxPoints: LIDAR_MAX_POINTS,
+}
+
+const INITIAL_DISPLAY_CONFIG = {
+  thermalPalette: THERMAL_PALETTE,
+  showThermalFov: SHOW_THERMAL_FOV,
+}
+
 export default function App() {
   const [showCal,  setShowCal]  = useState(false)
   const [activeSensorView, setActiveSensorView] = useState('fusion')
   const [selectedObjectKey, setSelectedObjectKey] = useState('')
   const [thermalCalibrationOverride, setThermalCalibrationOverride] = useState(null)
+  const [streamConfig, setStreamConfig] = useState(INITIAL_STREAM_CONFIG)
+  const [displayConfig, setDisplayConfig] = useState(INITIAL_DISPLAY_CONFIG)
   const [analystMessages, setAnalystMessages] = useState([])
   const [analystBusy, setAnalystBusy] = useState(false)
   const worldRef = useRef(null)
   const cameraRef = useRef(null)
 
-  const thermal = useThermal()
-  const lidar   = useLidar()
-  const camera  = useCamera()
+  const thermal = useThermal(streamConfig)
+  const lidar   = useLidar(streamConfig)
+  const camera  = useCamera(streamConfig)
 
   function selectObject(objectKey) {
     setSelectedObjectKey(objectKey)
     setActiveSensorView('fusion')
+  }
+
+  function applyStreamSettings(nextStreamConfig) {
+    const saved = saveConfig(
+      nextStreamConfig.host,
+      Number(nextStreamConfig.port),
+      nextStreamConfig.detectionMode,
+      nextStreamConfig.lidarMaxPoints,
+      displayConfig.thermalPalette,
+      displayConfig.showThermalFov,
+    )
+    setStreamConfig(streamFromSaved(saved))
+    setDisplayConfig(displayFromSaved(saved))
+  }
+
+  function applyDisplaySettings(nextDisplayConfig) {
+    const saved = saveConfig(
+      streamConfig.host,
+      streamConfig.port,
+      streamConfig.detectionMode,
+      streamConfig.lidarMaxPoints,
+      nextDisplayConfig.thermalPalette,
+      nextDisplayConfig.showThermalFov,
+    )
+    setStreamConfig(streamFromSaved(saved))
+    setDisplayConfig(displayFromSaved(saved))
   }
 
   async function askSceneAnalyst(message) {
@@ -57,7 +106,7 @@ export default function App() {
 
       const controller = new AbortController()
       timeout = window.setTimeout(() => controller.abort(), 90000)
-      const response = await fetch(apiUrl('/gemini/chat'), {
+      const response = await fetch(apiUrl('/gemini/chat', streamConfig), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -99,6 +148,10 @@ export default function App() {
     <div className={styles.root}>
       <TitleBar
         calibrationActive={showCal}
+        streamConfig={streamConfig}
+        displayConfig={displayConfig}
+        onStreamSettingsChange={applyStreamSettings}
+        onDisplaySettingsChange={applyDisplaySettings}
         onGoHome={() => setShowCal(false)}
         onOpenCalibration={() => setShowCal(open => !open)}
       />
@@ -134,6 +187,8 @@ export default function App() {
                   thermalData={thermal}
                   selectedObjectKey={selectedObjectKey}
                   thermalCalibrationOverride={thermalCalibrationOverride}
+                  thermalPalette={displayConfig.thermalPalette}
+                  showThermalFov={displayConfig.showThermalFov}
                 />
               </div>
 
@@ -228,5 +283,21 @@ function sceneSnapshot(lidar, thermal, camera) {
       width: camera.frame?.w ?? null,
       height: camera.frame?.h ?? null,
     },
+  }
+}
+
+function streamFromSaved(saved) {
+  return {
+    host: saved.host,
+    port: saved.port,
+    detectionMode: saved.detectionMode,
+    lidarMaxPoints: saved.lidarMaxPoints,
+  }
+}
+
+function displayFromSaved(saved) {
+  return {
+    thermalPalette: saved.thermalPalette,
+    showThermalFov: saved.showThermalFov,
   }
 }

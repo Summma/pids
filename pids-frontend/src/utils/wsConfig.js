@@ -7,6 +7,8 @@ const envHost = import.meta.env.VITE_PIDS_HOST
 const envPort = import.meta.env.VITE_PIDS_PORT
 const envDetectionMode = import.meta.env.VITE_PIDS_DETECTION_MODE
 const envLidarMaxPoints = import.meta.env.VITE_PIDS_LIDAR_MAX_POINTS
+const envThermalPalette = import.meta.env.VITE_PIDS_THERMAL_PALETTE
+const envShowThermalFov = import.meta.env.VITE_PIDS_SHOW_THERMAL_FOV
 
 export const DETECTION_MODE_OPTIONS = [
   {
@@ -78,15 +80,31 @@ export const LIDAR_POINT_OPTIONS = [
   { value: 120000, label: '120,000' },
 ]
 
+export const THERMAL_PALETTE_OPTIONS = [
+  { value: 'iron', label: 'Iron' },
+  { value: 'white_hot', label: 'White hot' },
+  { value: 'black_hot', label: 'Black hot' },
+  { value: 'turbo', label: 'Turbo' },
+]
+
 export let HOST = envHost ?? stored.host ?? defaultHost
 export let PORT = Number(envPort ?? stored.port ?? 9090)
 export let DETECTION_MODE = normalizeDetectionMode(envDetectionMode ?? stored.detectionMode ?? 'auto')
 export let LIDAR_MAX_POINTS = normalizeLidarMaxPoints(envLidarMaxPoints ?? stored.lidarMaxPoints ?? 60000)
+export let THERMAL_PALETTE = normalizeThermalPalette(envThermalPalette ?? stored.thermalPalette ?? 'iron')
+export let SHOW_THERMAL_FOV = normalizeBool(envShowThermalFov ?? stored.showThermalFov ?? true)
 
-export function getWsBase() { return `ws://${HOST}:${PORT}` }
-export function getHttpBase() {
+export function getWsBase(config = {}) {
+  const host = config.host ?? HOST
+  const port = config.port ?? PORT
+  return `ws://${host}:${port}`
+}
+
+export function getHttpBase(config = {}) {
   const proto = window.location.protocol === 'https:' ? 'https' : 'http'
-  return `${proto}://${HOST}:${PORT}`
+  const host = config.host ?? HOST
+  const port = config.port ?? PORT
+  return `${proto}://${host}:${port}`
 }
 
 export const WS_PATHS = {
@@ -98,32 +116,54 @@ export const WS_PATHS = {
   fusion:  '/fusion',
 }
 
-export function wsUrl(path, params = {}) {
+export function wsUrl(path, params = {}, config = {}) {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') query.set(key, value)
   })
   const suffix = query.toString()
-  return `${getWsBase()}${path}${suffix ? `?${suffix}` : ''}`
+  return `${getWsBase(config)}${path}${suffix ? `?${suffix}` : ''}`
 }
 
-export function apiUrl(path) { return `${getHttpBase()}${path}` }
+export function apiUrl(path, config = {}) { return `${getHttpBase(config)}${path}` }
 
-export function saveConfig(host, port, detectionMode = DETECTION_MODE, lidarMaxPoints = LIDAR_MAX_POINTS) {
+export function saveConfig(
+  host,
+  port,
+  detectionMode = DETECTION_MODE,
+  lidarMaxPoints = LIDAR_MAX_POINTS,
+  thermalPalette = THERMAL_PALETTE,
+  showThermalFov = SHOW_THERMAL_FOV,
+) {
   const normalizedDetectionMode = normalizeDetectionMode(detectionMode)
   const normalizedLidarMaxPoints = normalizeLidarMaxPoints(lidarMaxPoints)
+  const normalizedThermalPalette = normalizeThermalPalette(thermalPalette)
+  const normalizedShowThermalFov = normalizeBool(showThermalFov)
   HOST = host
   PORT = port
   DETECTION_MODE = normalizedDetectionMode
   LIDAR_MAX_POINTS = normalizedLidarMaxPoints
+  THERMAL_PALETTE = normalizedThermalPalette
+  SHOW_THERMAL_FOV = normalizedShowThermalFov
   try {
     localStorage.setItem('pids_cfg', JSON.stringify({
       host,
       port,
       detectionMode: normalizedDetectionMode,
       lidarMaxPoints: normalizedLidarMaxPoints,
+      thermalPalette: normalizedThermalPalette,
+      showThermalFov: normalizedShowThermalFov,
     }))
   } catch {}
+
+  return {
+    host: HOST,
+    port: PORT,
+    detectionMode: DETECTION_MODE,
+    lidarMaxPoints: LIDAR_MAX_POINTS,
+    thermalPalette: THERMAL_PALETTE,
+    showThermalFov: SHOW_THERMAL_FOV,
+  }
 }
 
 export function normalizeDetectionMode(value) {
@@ -137,4 +177,17 @@ export function normalizeLidarMaxPoints(value) {
   const rounded = Math.round(points)
   const clamped = Math.max(1000, Math.min(rounded, 131072))
   return LIDAR_POINT_OPTIONS.some(option => option.value === clamped) ? clamped : 60000
+}
+
+export function normalizeThermalPalette(value) {
+  const palette = String(value ?? '').trim()
+  return THERMAL_PALETTE_OPTIONS.some(option => option.value === palette) ? palette : 'iron'
+}
+
+export function normalizeBool(value) {
+  if (typeof value === 'boolean') return value
+  const text = String(value ?? '').trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(text)) return true
+  if (['0', 'false', 'no', 'off'].includes(text)) return false
+  return Boolean(value)
 }

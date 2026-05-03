@@ -8,9 +8,11 @@ const posBuf    = new Float32Array(MAX_PTS * 3)
 const intBuf    = new Float32Array(MAX_PTS)
 const rawBuf    = new Uint8Array(MAX_PTS * 16)
 
-export function useLidar() {
+export function useLidar(streamConfig = {}) {
+  const detectionMode = streamConfig.detectionMode ?? DETECTION_MODE
+  const lidarMaxPoints = streamConfig.lidarMaxPoints ?? LIDAR_MAX_POINTS
   const { connState, setOnMessage, send } = useWebSocket(
-    wsUrl(WS_PATHS.lidar, { mode: DETECTION_MODE, max_points: LIDAR_MAX_POINTS }),
+    wsUrl(WS_PATHS.lidar, { mode: detectionMode, max_points: lidarMaxPoints }, streamConfig),
     { binaryType: 'arraybuffer' },
   )
   const frameRef = useRef({ positions: posBuf, intensities: intBuf, n: 0 })

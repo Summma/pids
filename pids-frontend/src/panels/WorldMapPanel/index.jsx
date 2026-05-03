@@ -23,10 +23,17 @@ const MODES = [
   { key: 2, label: 'Height', title: 'height above sensor ground plane' },
   { key: 3, label: 'Intensity', title: 'lidar intensity / reflectivity proxy' },
 ]
+const THERMAL_PALETTE_CODES = {
+  iron: 0,
+  white_hot: 1,
+  black_hot: 2,
+  turbo: 3,
+}
 
 const VERT = /* glsl */`
   uniform float uMode;
   uniform float uHasThermal;
+  uniform float uThermalPalette;
   uniform float uRangeLo;
   uniform float uRangeHi;
   uniform float uHeightLo;
@@ -48,6 +55,27 @@ const VERT = /* glsl */`
     );
   }
 
+  vec3 ironLike(float u) {
+    u = clamp(u, 0.0, 1.0);
+    vec3 c0 = vec3(0.015, 0.010, 0.015);
+    vec3 c1 = vec3(0.240, 0.020, 0.010);
+    vec3 c2 = vec3(0.720, 0.100, 0.015);
+    vec3 c3 = vec3(1.000, 0.560, 0.080);
+    vec3 c4 = vec3(1.000, 0.980, 0.760);
+    if (u < 0.25) return mix(c0, c1, u / 0.25);
+    if (u < 0.50) return mix(c1, c2, (u - 0.25) / 0.25);
+    if (u < 0.78) return mix(c2, c3, (u - 0.50) / 0.28);
+    return mix(c3, c4, (u - 0.78) / 0.22);
+  }
+
+  vec3 thermalPalette(float u) {
+    u = clamp(u, 0.0, 1.0);
+    if (uThermalPalette < 0.5) return ironLike(u);
+    if (uThermalPalette < 1.5) return vec3(u);
+    if (uThermalPalette < 2.5) return vec3(1.0 - u);
+    return turboLike(u);
+  }
+
   float rescale(float value, float lo, float hi) {
     return clamp((value - lo) / max(hi - lo, 0.0001), 0.0, 1.0);
   }
@@ -55,8 +83,8 @@ const VERT = /* glsl */`
   void main() {
     float rangeM = length(position.xyz);
     if (uMode < 0.5) {
-      if (uHasThermal < 0.5)      vColor = turboLike(rescale(rangeM, uRangeLo, uRangeHi));
-      else if (thermalValid > 0.5) vColor = turboLike(thermalValue);
+      if (uHasThermal < 0.5)      vColor = vec3(0.18, 0.18, 0.20);
+      else if (thermalValid > 0.5) vColor = thermalPalette(thermalValue);
       else                         vColor = vec3(0.18, 0.18, 0.20);
     } else if (uMode < 1.5) {
       vColor = turboLike(rescale(rangeM, uRangeLo, uRangeHi));
@@ -84,6 +112,8 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
   thermalData,
   selectedObjectKey = '',
   thermalCalibrationOverride = null,
+  thermalPalette = 'iron',
+  showThermalFov = true,
 }, ref) {
   const {
     frameRef,
@@ -139,8 +169,8 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
 
     scene.add(makeAlejandroGrid())
     scene.add(makeLidarAxes())
-    const fovGroup = makeThermalFovGroup(FOV_DEPTH_M, GUI_DEFAULT_THERMAL_CALIBRATION)
-    scene.add(fovGroup)
+    const fovGroup = showThermalFov ? makeThermalFovGroup(FOV_DEPTH_M, GUI_DEFAULT_THERMAL_CALIBRATION) : null
+    if (fovGroup) scene.add(fovGroup)
     scene.add(new THREE.AmbientLight(0xffffff, 0.8))
 
     const pos = new Float32Array(MAX_POINTS * 3)
@@ -158,6 +188,7 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
       uniforms: {
         uMode: { value: mode },
         uHasThermal: { value: 0 },
+        uThermalPalette: { value: thermalPaletteCode(thermalPalette) },
         uRangeLo: { value: 0 },
         uRangeHi: { value: 30 },
         uHeightLo: { value: -1 },
@@ -228,10 +259,17 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
       ctx.scene.remove(ctx.fovGroup)
       disposeGroup(ctx.fovGroup)
     }
-    ctx.fovGroup = makeThermalFovGroup(FOV_DEPTH_M, thermalCalibration)
-    ctx.scene.add(ctx.fovGroup)
+    ctx.fovGroup = showThermalFov ? makeThermalFovGroup(FOV_DEPTH_M, thermalCalibration) : null
+    if (ctx.fovGroup) ctx.scene.add(ctx.fovGroup)
     ctx.renderScene()
-  }, [thermalCalibration])
+  }, [thermalCalibration, showThermalFov])
+
+  useEffect(() => {
+    const ctx = sceneRef.current
+    if (!ctx) return
+    ctx.mat.uniforms.uThermalPalette.value = thermalPaletteCode(thermalPalette)
+    ctx.renderScene()
+  }, [thermalPalette])
 
   useEffect(() => {
     const ctx = sceneRef.current
@@ -328,6 +366,10 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
 })
 
 export default WorldMapPanel
+
+function thermalPaletteCode(value) {
+  return THERMAL_PALETTE_CODES[value] ?? THERMAL_PALETTE_CODES.iron
+}
 
 function normalizeThermalCalibration(value) {
   const fallback = GUI_DEFAULT_THERMAL_CALIBRATION
@@ -735,6 +777,7 @@ function detectionColor(label, score) {
 }
 
 function disposeGroup(group) {
+  if (!group) return
   while (group.children.length) {
     const child = group.children.pop()
     child.geometry?.dispose?.()

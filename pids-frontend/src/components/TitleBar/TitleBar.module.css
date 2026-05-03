@@ -156,6 +156,20 @@
   padding: 5px 0;
 }
 
+.settingsCheckRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+}
+
+.settingsCheckRow input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--ink);
+}
+
 .settingsLabel {
   font-size: 11px;
   color: var(--text-sec);
@@ -184,6 +198,13 @@
   border-color: var(--accent);
 }
 
+.settingsNote {
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .settingsApply {
   width: 100%;
   margin-top: 12px;
@@ -198,6 +219,12 @@
   transition: background 0.15s;
 }
 .settingsApply:hover { background: #303030; }
+.settingsApply:disabled {
+  cursor: default;
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-dim);
+}
 
 @media (max-width: 720px) {
   .logoButton {

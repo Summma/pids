@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { useWebSocket } from './useWebSocket'
 import { wsUrl, WS_PATHS } from '@/utils/wsConfig'
 
-export function useCamera() {
-  const { connState, setOnMessage, send } = useWebSocket(wsUrl(WS_PATHS.camera))
+export function useCamera(streamConfig) {
+  const { connState, setOnMessage, send } = useWebSocket(wsUrl(WS_PATHS.camera, {}, streamConfig))
   const [frame, setFrame] = useState({ src: '', w: 0, h: 0, seq: 0, ts: 0 })
   const [error, setError] = useState('')
 
