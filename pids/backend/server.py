@@ -70,17 +70,39 @@ ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_GEMINI_IMAGE_BYTES = 6 * 1024 * 1024
 MAX_GEMINI_IMAGES = 4
 DATA_URL_RE = re.compile(r"^data:(?P<mime>[-\w.+/]+);base64,(?P<data>.*)$", re.S)
-DETECTION_MODES = ("off", "indoor_human", "roi_thermal", "seated_roi", "pointpillars", "auto")
+ADVANCED_ROI_DETECTION_MODES = (
+    "pointnet_roi",
+    "pointnext_roi",
+    "dgcnn_roi",
+    "kpconv_roi",
+    "sparse_cnn_roi",
+    "point_transformer_roi",
+)
+DETECTION_MODES = (
+    "off",
+    "indoor_human",
+    "roi_thermal",
+    "seated_roi",
+    *ADVANCED_ROI_DETECTION_MODES,
+    "pointpillars",
+    "auto",
+)
 DETECTION_MODE_LABELS = {
     "off": "Off",
     "indoor_human": "Indoor ROI",
     "roi_thermal": "Thermal ROI",
     "seated_roi": "Seated ROI",
+    "pointnet_roi": "PointNet++ ROI + thermal",
+    "pointnext_roi": "PointNeXt ROI + thermal",
+    "dgcnn_roi": "DGCNN ROI + thermal",
+    "kpconv_roi": "KPConv ROI + thermal",
+    "sparse_cnn_roi": "Sparse CNN ROI + thermal",
+    "point_transformer_roi": "Point Transformer ROI + thermal",
     "pointpillars": "PointPillars",
     "auto": "Auto fusion",
 }
-INDOOR_DETECTION_MODES = {"indoor_human", "auto", "roi_thermal", "seated_roi"}
-POINTPILLARS_DETECTION_MODES = {"pointpillars", "auto", "roi_thermal", "seated_roi"}
+INDOOR_DETECTION_MODES = {"indoor_human", "auto", "roi_thermal", "seated_roi", *ADVANCED_ROI_DETECTION_MODES}
+POINTPILLARS_DETECTION_MODES = {"pointpillars", "auto", "roi_thermal", "seated_roi", *ADVANCED_ROI_DETECTION_MODES}
 LIDAR_MIN_POINTS = 1_000
 LIDAR_MAX_POINTS = 131_072
 
@@ -475,6 +497,10 @@ class DetectionEngine:
                 before = len(boxes)
                 boxes = select_seated_roi_detections(boxes)
                 status_parts.append(f"seated ROI gate kept {len(boxes)}/{before}")
+            elif self.mode in ADVANCED_ROI_DETECTION_MODES:
+                before = len(boxes)
+                boxes, profile_status = select_advanced_roi_detections(boxes, self.mode)
+                status_parts.append(f"{profile_status} kept {len(boxes)}/{before}")
 
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self._last_result = {
@@ -580,6 +606,19 @@ def configure_indoor_profile(params: Any, mode: str) -> None:
         params.association_distance = 1.45
         params.confirm_hits = 2
         params.max_misses = 6
+    elif mode in ADVANCED_ROI_DETECTION_MODES:
+        params.voxel_size = 0.065 if mode in {"pointnext_roi", "point_transformer_roi"} else 0.075
+        params.max_points = 18_000
+        params.eps = 0.36 if mode in {"dgcnn_roi", "kpconv_roi"} else 0.40
+        params.min_samples = 7
+        params.min_cluster_points = 14
+        params.association_distance = 1.50
+        params.confirm_hits = 2
+        params.max_misses = 6
+        params.include_ambiguous_candidates = True
+        params.ambiguous_score_floor = 0.32 if mode in {"pointnext_roi", "point_transformer_roi"} else 0.36
+        params.max_clusters = 48
+        params.max_roi_proposals = 110
     elif mode == "roi_thermal":
         params.confirm_hits = 3
         params.max_misses = 4
@@ -1510,6 +1549,152 @@ def select_seated_roi_detections(detections: list) -> list:
             setattr(det, "source", "seated_roi")
             kept.append(det)
     return kept
+
+
+ADVANCED_ROI_PROFILES = {
+    "pointnet_roi": {
+        "note": "pointnet++_roi_thermal_features",
+        "weights": (0.42, 0.34, 0.16, 0.08),
+        "threshold": 0.56,
+        "thermal_confirm": 0.48,
+        "min_support": 45,
+    },
+    "pointnext_roi": {
+        "note": "pointnext_roi_thermal_features",
+        "weights": (0.36, 0.36, 0.18, 0.10),
+        "threshold": 0.54,
+        "thermal_confirm": 0.45,
+        "min_support": 38,
+    },
+    "dgcnn_roi": {
+        "note": "dgcnn_edge_roi_thermal_features",
+        "weights": (0.38, 0.26, 0.28, 0.08),
+        "threshold": 0.58,
+        "thermal_confirm": 0.50,
+        "min_support": 55,
+    },
+    "kpconv_roi": {
+        "note": "kpconv_geometry_roi_thermal_features",
+        "weights": (0.34, 0.28, 0.30, 0.08),
+        "threshold": 0.57,
+        "thermal_confirm": 0.49,
+        "min_support": 55,
+    },
+    "sparse_cnn_roi": {
+        "note": "sparse_cnn_voxel_roi_thermal_features",
+        "weights": (0.30, 0.30, 0.32, 0.08),
+        "threshold": 0.58,
+        "thermal_confirm": 0.50,
+        "min_support": 70,
+    },
+    "point_transformer_roi": {
+        "note": "point_transformer_roi_thermal_features",
+        "weights": (0.30, 0.42, 0.18, 0.10),
+        "threshold": 0.60,
+        "thermal_confirm": 0.44,
+        "min_support": 38,
+    },
+}
+
+
+def select_advanced_roi_detections(detections: list, mode: str) -> tuple[list, str]:
+    """Thermal-aware ROI model profiles for advanced crop-model options.
+
+    These profiles keep the existing ROI generator but score each tracked crop
+    with geometry, point support, PointPillars support, and projected thermal
+    evidence. They are model-shaped feature priors until trained crop-model
+    checkpoints are added; importantly, thermal can promote ambiguous
+    seated/empty-chair ROIs that the geometry-only baseline would discard.
+    """
+    profile = ADVANCED_ROI_PROFILES.get(mode, ADVANCED_ROI_PROFILES["pointnext_roi"])
+    geom_w, thermal_w, support_w, pp_w = profile["weights"]
+    kept = []
+    promoted = 0
+    cooled = 0
+
+    for det in detections:
+        label = str(getattr(det, "class_name", getattr(det, "label", ""))).lower()
+        note = str(getattr(det, "fusion_note", ""))
+        geometry = float(np.clip(getattr(det, "model_score", getattr(det, "score", 0.0)), 0.0, 1.0))
+        coverage = float(np.clip(getattr(det, "thermal_coverage", 0.0), 0.0, 1.0))
+        thermal_score = float(np.clip(getattr(det, "thermal_score", 0.0), 0.0, 1.0))
+        hot_fraction = float(np.clip(getattr(det, "thermal_hot_fraction", 0.0), 0.0, 1.0))
+        thermal_max = float(np.clip(getattr(det, "thermal_max", 0.0), 0.0, 1.0))
+        pp_support = float(np.clip(getattr(det, "pointpillars_support", 0.0), 0.0, 1.0))
+        support_points = int(getattr(det, "support_points", getattr(det, "n_points", 0)))
+        z_span = float(getattr(det, "support_z_span", 0.0))
+
+        support_signal = float(
+            np.clip(
+                0.55 * (support_points / max(float(profile["min_support"]), 1.0))
+                + 0.45 * (z_span / 1.15),
+                0.0,
+                1.0,
+            )
+        )
+        thermal_signal = float(
+            np.clip(
+                coverage
+                * (
+                    0.52 * thermal_score
+                    + 0.28 * thermal_max
+                    + 0.20 * np.clip(hot_fraction / 0.055, 0.0, 1.0)
+                ),
+                0.0,
+                1.0,
+            )
+        )
+        profile_score = float(
+            np.clip(
+                geom_w * geometry
+                + thermal_w * thermal_signal
+                + support_w * support_signal
+                + pp_w * pp_support,
+                0.0,
+                0.99,
+            )
+        )
+
+        seated_like = "seated" in label or "occupied" in label or "chair" in label
+        human_like = seated_like or "standing" in label or "person" in label or "pedestrian" in label or "human" in label
+        ambiguous = "empty_chair" in label or "uncertain" in label
+        thermal_confirms = thermal_signal >= float(profile["thermal_confirm"]) or (
+            coverage >= 0.18 and (thermal_score >= 0.50 or hot_fraction >= 0.035)
+        )
+        thermal_rejects = coverage >= 0.34 and thermal_score <= 0.24 and hot_fraction < 0.012 and pp_support < 0.34
+
+        if thermal_rejects and not ambiguous:
+            cooled += 1
+            continue
+
+        if ambiguous:
+            if not thermal_confirms:
+                continue
+            det.class_name = "occupied_chair"
+            det.class_id = 1
+            label = "occupied_chair"
+            human_like = True
+            promoted += 1
+
+        if not human_like:
+            continue
+
+        if seated_like and thermal_confirms:
+            profile_score = min(0.99, profile_score + 0.10)
+        elif pp_support >= 0.42:
+            profile_score = min(0.99, profile_score + 0.06)
+
+        if profile_score < float(profile["threshold"]):
+            continue
+
+        setattr(det, "source", mode)
+        setattr(det, "score", profile_score)
+        setattr(det, "fusion_score", profile_score)
+        setattr(det, "fusion_note", append_fusion_note(note, profile["note"]))
+        kept.append(det)
+
+    status = f"{profile['note']}, promoted {promoted}, cool-rejected {cooled}"
+    return kept, status
 
 
 def append_fusion_note(note: str, suffix: str) -> str:

@@ -30,6 +30,36 @@ export const DETECTION_MODE_OPTIONS = [
     title: 'Seated-person and occupied-chair ROI profile with denser clustering and thermal support',
   },
   {
+    value: 'pointnet_roi',
+    label: 'PointNet++ ROI + thermal',
+    title: 'Thermal-aware crop profile shaped for PointNet++/PointNet-style ROI classification',
+  },
+  {
+    value: 'pointnext_roi',
+    label: 'PointNeXt ROI + thermal',
+    title: 'Thermal-aware crop profile shaped for PointNeXt-style seated/person ROI classification',
+  },
+  {
+    value: 'dgcnn_roi',
+    label: 'DGCNN ROI + thermal',
+    title: 'Thermal-aware crop profile emphasizing local edge/shape evidence like DGCNN EdgeConv',
+  },
+  {
+    value: 'kpconv_roi',
+    label: 'KPConv ROI + thermal',
+    title: 'Thermal-aware crop profile emphasizing geometric support like kernel point convolutions',
+  },
+  {
+    value: 'sparse_cnn_roi',
+    label: 'Sparse CNN ROI + thermal',
+    title: 'Thermal-aware crop profile emphasizing voxel occupancy support for sparse CNN models',
+  },
+  {
+    value: 'point_transformer_roi',
+    label: 'Point Transformer ROI + thermal',
+    title: 'Thermal-aware crop profile emphasizing context and heat evidence for transformer-style models',
+  },
+  {
     value: 'pointpillars',
     label: 'PointPillars',
     title: 'Jetson PointPillars detector with thermal fusion',

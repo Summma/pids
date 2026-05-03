@@ -87,6 +87,10 @@ class IndoorHumanParams:
     confirm_hits: int = 2
     confirm_window: int = 5
     max_misses: int = 5
+    include_ambiguous_candidates: bool = False
+    ambiguous_score_floor: float = 0.36
+    max_clusters: int = 72
+    max_roi_proposals: int = 160
 
 
 @dataclass
@@ -700,6 +704,38 @@ def _classify_roi(
             class_scores=cls.scores,
         )
 
+    if (
+        params.include_ambiguous_candidates
+        and cls.label in {"empty_chair", "uncertain"}
+        and cls.score >= params.ambiguous_score_floor
+    ):
+        candidate = HumanCandidate(
+            center=center.astype(np.float32),
+            size=size.astype(np.float32),
+            yaw=yaw,
+            score=min(cls.score, 0.74),
+            points=int(len(points)),
+            z_span=height,
+            floor_z=floor_z,
+            kind=cls.label,
+            features=features,
+            class_scores=cls.scores,
+        )
+        return candidate, _debug_item(
+            points,
+            center,
+            size,
+            yaw,
+            score=candidate.score,
+            kind=cls.label,
+            reason="ambiguous_candidate",
+            accepted=False,
+            cluster_id=proposal.cluster_id,
+            source=proposal.source,
+            features=features,
+            class_scores=cls.scores,
+        )
+
     return reject(cls.reason, score=cls.score, kind=cls.label, scores=cls.scores)
 
 
@@ -850,14 +886,27 @@ def detect_human_candidates(
 
     candidates: list[HumanCandidate] = []
     debug: list[CandidateDebug] = []
-    cluster_count = 0
+    clusters: list[tuple[float, int, np.ndarray]] = []
     roi_count = 0
     for label in np.unique(labels):
         if label == -1:
             continue
-        cluster_count += 1
         cluster = pts[labels == label]
-        for proposal in _candidate_proposals(cluster, pts, floor_z, params, int(label)):
+        if len(cluster) < params.min_cluster_points:
+            continue
+        center = cluster.mean(axis=0)
+        range_m = float(np.linalg.norm(center[:2]))
+        priority = float(len(cluster)) / max(range_m, 1.0)
+        clusters.append((priority, int(label), cluster))
+
+    clusters.sort(key=lambda item: item[0], reverse=True)
+    cluster_count = len(clusters)
+    for _priority, label, cluster in clusters[: max(1, int(params.max_clusters))]:
+        if roi_count >= params.max_roi_proposals:
+            break
+        for proposal in _candidate_proposals(cluster, pts, floor_z, params, label):
+            if roi_count >= params.max_roi_proposals:
+                break
             roi_count += 1
             cand, item = _classify_roi(proposal, floor_z, params, classifier)
             debug.append(item)
