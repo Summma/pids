@@ -11,8 +11,16 @@ import { useCamera }   from '@/hooks/useCamera'
 import { apiUrl } from '@/utils/wsConfig'
 import styles from './App.module.css'
 
+const SENSOR_VIEWS = [
+  { key: 'fusion', label: 'Thermal + Lidar' },
+  { key: 'camera', label: 'Camera' },
+]
+
 export default function App() {
   const [showCal,  setShowCal]  = useState(false)
+  const [activeSensorView, setActiveSensorView] = useState('fusion')
+  const [selectedObjectKey, setSelectedObjectKey] = useState('')
+  const [thermalCalibrationOverride, setThermalCalibrationOverride] = useState(null)
   const [analystMessages, setAnalystMessages] = useState([])
   const [analystBusy, setAnalystBusy] = useState(false)
   const worldRef = useRef(null)
@@ -21,6 +29,11 @@ export default function App() {
   const thermal = useThermal()
   const lidar   = useLidar()
   const camera  = useCamera()
+
+  function selectObject(objectKey) {
+    setSelectedObjectKey(objectKey)
+    setActiveSensorView('fusion')
+  }
 
   async function askSceneAnalyst(message) {
     const text = message.trim()
@@ -93,12 +106,44 @@ export default function App() {
       <main className={styles.main}>
         <div className={styles.workspace}>
           <div className={styles.liveGrid}>
-            <WorldMapPanel
-              ref={worldRef}
-              lidarData={lidar}
-              thermalData={thermal}
-            />
-            <CameraPanel ref={cameraRef} cameraData={camera} />
+            <div className={styles.sensorStage}>
+              <div className={styles.viewSwitch} aria-label="Sensor view">
+                {SENSOR_VIEWS.map(view => {
+                  const active = activeSensorView === view.key
+                  return (
+                    <button
+                      key={view.key}
+                      type="button"
+                      className={`${styles.viewSwitchButton} ${active ? styles.viewSwitchButtonActive : ''}`}
+                      aria-pressed={active}
+                      onClick={() => setActiveSensorView(view.key)}
+                    >
+                      {view.label}
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div
+                className={`${styles.sensorLayer} ${activeSensorView === 'fusion' ? styles.sensorLayerActive : ''}`}
+                aria-hidden={activeSensorView !== 'fusion'}
+              >
+                <WorldMapPanel
+                  ref={worldRef}
+                  lidarData={lidar}
+                  thermalData={thermal}
+                  selectedObjectKey={selectedObjectKey}
+                  thermalCalibrationOverride={thermalCalibrationOverride}
+                />
+              </div>
+
+              <div
+                className={`${styles.sensorLayer} ${activeSensorView === 'camera' ? styles.sensorLayerActive : ''}`}
+                aria-hidden={activeSensorView !== 'camera'}
+              >
+                <CameraPanel ref={cameraRef} cameraData={camera} />
+              </div>
+            </div>
           </div>
           <div className={styles.sideStack}>
             <GeminiSidebar
@@ -106,12 +151,24 @@ export default function App() {
               busy={analystBusy}
               onSend={askSceneAnalyst}
             />
-            <ObjectListPanel lidarData={lidar} />
+            <ObjectListPanel
+              lidarData={lidar}
+              selectedObjectKey={selectedObjectKey}
+              onSelectObject={selectObject}
+            />
           </div>
         </div>
       </main>
 
-      {showCal && <CalibrationPanel onClose={() => setShowCal(false)} />}
+      {showCal && (
+        <CalibrationPanel
+          lidarData={lidar}
+          thermalData={thermal}
+          calibrationOverride={thermalCalibrationOverride}
+          onCalibrationChange={setThermalCalibrationOverride}
+          onClose={() => setShowCal(false)}
+        />
+      )}
     </div>
   )
 }

@@ -89,3 +89,17 @@
 .fusion {
   color: #ffb800;
 }
+
+@media (max-width: 720px) {
+  .controlsOverlay {
+    top: 52px;
+    right: 12px;
+    left: 12px;
+    max-width: calc(100% - 24px);
+  }
+
+  .controls {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+}

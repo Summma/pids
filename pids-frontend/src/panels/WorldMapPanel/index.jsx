@@ -1,6 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js'
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js'
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js'
 import PanelShell from '@/components/PanelShell'
 import styles from './WorldMapPanel.module.css'
 
@@ -76,7 +79,12 @@ const FRAG = /* glsl */`
   }
 `
 
-const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData }, ref) {
+const WorldMapPanel = forwardRef(function WorldMapPanel({
+  lidarData,
+  thermalData,
+  selectedObjectKey = '',
+  thermalCalibrationOverride = null,
+}, ref) {
   const {
     frameRef,
     meta: lidarMeta,
@@ -90,8 +98,8 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
 
   const boxes = useMemo(() => normalizeDetections(detections), [detections])
   const thermalCalibration = useMemo(
-    () => normalizeThermalCalibration(thermalMeta.calibration),
-    [thermalMeta.calibration],
+    () => normalizeThermalCalibration(thermalCalibrationOverride ?? thermalMeta.calibration),
+    [thermalCalibrationOverride, thermalMeta.calibration],
   )
   const thermalConfirmed = boxes.filter(box => box.thermalScore >= 0.62 && box.thermalCoverage >= 0.12).length
   const thermalStatus = thermalError || (thermalState === 'live' ? `${thermalMeta.tMin.toFixed(1)}-${thermalMeta.tMax.toFixed(1)} C` : 'thermal offline')
@@ -179,6 +187,7 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
       camera.aspect = nextW / nextH
       camera.updateProjectionMatrix()
       renderer.setSize(nextW, nextH)
+      updateBoxMaterialResolution(boxGroup, nextW, nextH)
       renderScene()
     })
     ro.observe(el)
@@ -273,9 +282,9 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
   useEffect(() => {
     const ctx = sceneRef.current
     if (!ctx) return
-    drawDetectionBoxes(ctx.boxGroup, boxes)
+    drawDetectionBoxes(ctx, boxes, selectedObjectKey)
     ctx.renderScene()
-  }, [boxes])
+  }, [boxes, selectedObjectKey])
 
   useImperativeHandle(ref, () => ({
     capture() {
@@ -284,7 +293,7 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
       ctx.renderScene()
       return ctx.renderer.domElement.toDataURL('image/jpeg', 0.86)
     },
-  }), [lidarMeta.seq, thermalMeta.seq, boxes, mode])
+  }), [lidarMeta.seq, thermalMeta.seq, boxes, mode, selectedObjectKey])
 
   const controls = (
     <div className={styles.controls}>
@@ -356,18 +365,51 @@ function intOr(value, fallback, minValue) {
   return Math.max(minValue, Math.round(numberOr(value, fallback)))
 }
 
-function drawDetectionBoxes(group, boxes) {
-  disposeGroup(group)
+function drawDetectionBoxes(ctx, boxes, selectedObjectKey) {
+  disposeGroup(ctx.boxGroup)
+  const viewport = ctx.renderer.getSize(new THREE.Vector2())
   boxes.forEach(box => {
     const pts = orientedBoxLines(box)
-    const geometry = new THREE.BufferGeometry().setFromPoints(pts.map(p => new THREE.Vector3(p[0], p[1], p[2])))
-    const material = new THREE.LineBasicMaterial({
-      color: detectionColor(box.label, box.score),
-      transparent: true,
-      opacity: 0.95,
-    })
-    const line = new THREE.LineSegments(geometry, material)
-    group.add(line)
+    const color = detectionColor(box.label, box.score)
+    const selected = box.key === selectedObjectKey
+    const line = selected
+      ? makeWideBoxLine(pts, color, viewport)
+      : makeThinBoxLine(pts, color)
+    ctx.boxGroup.add(line)
+  })
+}
+
+function makeThinBoxLine(points, color) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points.map(p => new THREE.Vector3(p[0], p[1], p[2])))
+  const material = new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.95,
+  })
+  return new THREE.LineSegments(geometry, material)
+}
+
+function makeWideBoxLine(points, color, viewport) {
+  const geometry = new LineSegmentsGeometry()
+  geometry.setPositions(points.flat())
+  const material = new LineMaterial({
+    color,
+    linewidth: 4,
+    transparent: true,
+    opacity: 1,
+    depthTest: false,
+  })
+  material.resolution.set(Math.max(1, viewport.x), Math.max(1, viewport.y))
+  const line = new LineSegments2(geometry, material)
+  line.frustumCulled = false
+  return line
+}
+
+function updateBoxMaterialResolution(group, width, height) {
+  group.traverse(child => {
+    if (child.material?.resolution?.set) {
+      child.material.resolution.set(Math.max(1, width), Math.max(1, height))
+    }
   })
 }
 
@@ -643,9 +685,12 @@ function normalizeDetections(items) {
     const size = vec3(item.size, null)
       ?? bboxSize(item.bbox_min ?? item.min, item.bbox_max ?? item.max)
       ?? [0.35, 0.35, 0.8]
+    const id = item.track_id ?? item.id ?? i + 1
+    const source = item.source ?? 'detector'
     return {
-      id: item.track_id ?? item.id ?? i + 1,
-      source: item.source ?? 'detector',
+      id,
+      key: objectKey(source, id),
+      source,
       center,
       size,
       yaw: Number(item.yaw ?? item.heading ?? 0) || 0,
@@ -657,6 +702,10 @@ function normalizeDetections(items) {
       fusionNote: String(item.fusion_note ?? ''),
     }
   }).filter(item => item.size.every(Number.isFinite) && item.center.every(Number.isFinite))
+}
+
+function objectKey(source, id) {
+  return `${String(source)}:${String(id)}`
 }
 
 function vec3(value, fallback) {

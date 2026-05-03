@@ -32,13 +32,90 @@
 }
 
 .liveGrid {
+  position: relative;
   width: 100%;
   height: 100%;
-  display: grid;
-  grid-template-rows: minmax(0, 1.08fr) minmax(0, 0.92fr);
-  gap: var(--panel-gap);
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
+}
+
+.sensorStage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: #050608;
+}
+
+.sensorLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sensorLayer > * {
+  min-height: 0;
+  min-width: 0;
+}
+
+.sensorLayerActive {
+  z-index: 1;
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.viewSwitch {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 72px);
+  padding: 2px;
+  overflow: hidden;
+  background: rgba(5, 7, 10, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+}
+
+.viewSwitchButton {
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(240, 242, 244, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s, color 0.15s;
+}
+
+.viewSwitchButton:hover {
+  color: #ffffff;
+}
+
+.viewSwitchButtonActive {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
 }
 
 .sideStack {
@@ -61,8 +138,6 @@
   }
 
   .liveGrid {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(300px, 1fr) minmax(260px, 0.88fr);
     min-height: 620px;
   }
 
@@ -79,7 +154,16 @@
   }
 
   .liveGrid {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+    min-height: 560px;
+  }
+
+  .viewSwitch {
+    max-width: calc(100% - 24px);
+  }
+
+  .viewSwitchButton {
+    height: 26px;
+    padding: 0 8px;
+    font-size: 11px;
   }
 }
