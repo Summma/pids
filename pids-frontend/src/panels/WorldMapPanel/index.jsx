@@ -236,9 +236,10 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
       const xForward = frame.positions[src]
       const yLeft = frame.positions[src + 1]
       const zUp = frame.positions[src + 2]
-      ctx.pos[dst] = -yLeft
-      ctx.pos[dst + 1] = zUp
-      ctx.pos[dst + 2] = xForward
+      const scenePoint = lidarToScene([xForward, yLeft, zUp])
+      ctx.pos[dst] = scenePoint[0]
+      ctx.pos[dst + 1] = scenePoint[1]
+      ctx.pos[dst + 2] = scenePoint[2]
     }
     ctx.intn.set(frame.intensities.subarray(0, n))
     updateScalarBounds(ctx, frame, n)
@@ -394,7 +395,9 @@ function orientedBoxLines(box) {
 }
 
 function lidarToScene(v) {
-  return [-v[1], v[2], v[0]]
+  // Ouster lidar is right-handed: +X forward, +Y left, +Z up.
+  // Three.js is Y-up; map to +X right, +Y up, -Z forward without mirroring.
+  return [-v[1], v[2], -v[0]]
 }
 
 function updateThermalProjection(ctx, frame, thermalFrame, n, calibration) {
