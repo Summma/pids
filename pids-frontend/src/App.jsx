@@ -87,6 +87,38 @@ export default function App() {
     detections: yoloDetections,
   }), [lidar, yoloDetections])
 
+  // Lidar is the slowest stream — use it as the time anchor so the thermal
+  // overlay and camera feed don't visibly run ahead of the 3D points.
+  const lidarTs = lidar.meta?.ts ?? 0
+  const lidarSeq = lidar.meta?.seq ?? 0
+
+  const syncedThermalData = useMemo(() => {
+    const matched = thermal.frameAt ? thermal.frameAt(lidarTs) : thermal.frameRef?.current
+    return {
+      connState: thermal.connState,
+      frameAt: thermal.frameAt,
+      frameRef: { current: matched ?? null },
+      meta: {
+        ...thermal.meta,
+        seq: lidarSeq,
+        ts: matched?.ts ?? 0,
+      },
+      error: thermal.error,
+      sendControl: thermal.sendControl,
+    }
+  }, [thermal.connState, thermal.frameAt, thermal.frameRef, thermal.meta, thermal.error, thermal.sendControl, lidarTs, lidarSeq])
+
+  const syncedCameraData = useMemo(() => {
+    const matched = camera.frameAt ? camera.frameAt(lidarTs) : camera.frame
+    return {
+      connState: camera.connState,
+      frameAt: camera.frameAt,
+      frame: matched ?? camera.frame,
+      error: camera.error,
+      sendControl: camera.sendControl,
+    }
+  }, [camera.connState, camera.frameAt, camera.frame, camera.error, camera.sendControl, lidarTs])
+
   function selectObject(objectKey) {
     setSelectedObjectKey(objectKey)
     setActiveSensorView('fusion')
@@ -245,7 +277,7 @@ export default function App() {
                 <WorldMapPanel
                   ref={worldRef}
                   lidarData={lidarWithYolo}
-                  thermalData={thermal}
+                  thermalData={syncedThermalData}
                   selectedObjectKey={selectedObjectKey}
                   thermalCalibrationOverride={thermalCalibrationOverride}
                   thermalPalette={displayConfig.thermalPalette}
@@ -257,7 +289,7 @@ export default function App() {
                 className={`${styles.sensorLayer} ${activeSensorView === 'camera' ? styles.sensorLayerActive : ''}`}
                 aria-hidden={activeSensorView !== 'camera'}
               >
-                <CameraPanel ref={cameraRef} cameraData={camera} />
+                <CameraPanel ref={cameraRef} cameraData={syncedCameraData} />
               </div>
             </div>
           </div>
