@@ -1,10 +1,10 @@
 import styles from './PanelShell.module.css'
 
 const STATE_LABEL = {
-  live:       { cls: styles.live,       dot: true  },
-  connecting: { cls: styles.connecting, dot: true  },
-  stale:      { cls: styles.stale,      dot: true  },
-  offline:    { cls: styles.offline,    dot: false },
+  live:       { cls: styles.live,       label: 'Live' },
+  connecting: { cls: styles.offline,    label: 'Connecting' },
+  stale:      { cls: styles.offline,    label: 'Stale' },
+  offline:    { cls: styles.offline,    label: 'Offline' },
 }
 
 export default function PanelShell({
@@ -16,30 +16,42 @@ export default function PanelShell({
   onPopOut,          // fn → show pop-out button
   children,
   className = '',
+  bare = false,
+  showStatusDot = true,
 }) {
   const sc = STATE_LABEL[connState] ?? STATE_LABEL.connecting
 
   return (
-    <div className={`${styles.shell} ${className}`}>
-      <div className={styles.header}>
-        <div className={styles.headerLeft}>
-          {modality && <span className={`${styles.modalityDot} ${styles[modality]}`} />}
-          <span className={styles.title}>{title}</span>
-          {subtitle && <span className={styles.subtitle}>{subtitle}</span>}
-        </div>
-        <div className={styles.headerRight}>
-          {controls}
-          <div className={`${styles.statePill} ${sc.cls}`}>
-            {sc.dot && <span className={styles.dot} />}
-            {connState.toUpperCase()}
+    <div className={`${styles.shell} ${bare ? styles.bare : ''} ${className}`}>
+      {bare ? (
+        <span
+          className={`${styles.bareStateDot} ${sc.cls}`}
+          title={sc.label}
+          aria-label={sc.label}
+        />
+      ) : (
+        <div className={styles.header}>
+          <div className={styles.headerLeft}>
+            <span className={styles.title}>{title}</span>
+            {subtitle && <span className={styles.subtitle}>{subtitle}</span>}
           </div>
-          {onPopOut && (
-            <button className={styles.popOutBtn} onClick={onPopOut} title="Pop out">
-              ⤢
-            </button>
-          )}
+          <div className={styles.headerRight}>
+            {controls}
+            {showStatusDot && (
+              <span
+                className={`${styles.stateDot} ${sc.cls}`}
+                title={sc.label}
+                aria-label={sc.label}
+              />
+            )}
+            {onPopOut && (
+              <button className={styles.popOutBtn} onClick={onPopOut} title="Pop out">
+                ⤢
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
       <div className={styles.body}>
         {children}
       </div>

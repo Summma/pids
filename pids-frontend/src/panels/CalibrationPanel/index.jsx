@@ -59,10 +59,10 @@ export default function CalibrationPanel({ onClose }) {
   return (
     <div className={styles.overlay}>
       <div className={styles.header}>
-        <span className={styles.title}>⊕ CALIBRATION</span>
+        <span className={styles.title}>⊕ Calibration</span>
         <div className={styles.headerRight}>
           <span className={styles.hint}>Align lidar edges to thermal edges</span>
-          <button className="btn" onClick={onClose}>✕ CLOSE</button>
+          <button className="btn" onClick={onClose}>✕ Close</button>
         </div>
       </div>
 
@@ -70,12 +70,12 @@ export default function CalibrationPanel({ onClose }) {
         {/* Viewport */}
         <div className={styles.viewport}>
           <div className={styles.viewportPlaceholder}>
-            <span>SYNTHESIZED LIDAR-ON-THERMAL VIEW</span>
+            <span>Synthesized lidar-on-thermal view</span>
             <span className={styles.viewHint}>Connect sensors to enable live alignment</span>
           </div>
           <div className={styles.viewControls}>
             <label className={styles.sliderLabel}>
-              BLEND
+              Blend
               <input
                 type="range" min={0} max={1} step={0.01}
                 value={alpha}
@@ -88,7 +88,7 @@ export default function CalibrationPanel({ onClose }) {
               className={`btn ${edgeOn ? 'active' : ''}`}
               onClick={() => setEdgeOn(e => !e)}
             >
-              CANNY EDGES
+              Canny edges
             </button>
           </div>
         </div>
@@ -96,7 +96,7 @@ export default function CalibrationPanel({ onClose }) {
         {/* Controls */}
         <div className={styles.controls}>
           <section className={styles.section}>
-            <div className={styles.sectionTitle}>CAMERA INTRINSICS</div>
+            <div className={styles.sectionTitle}>Camera intrinsics</div>
             {['fx', 'fy', 'cx', 'cy'].map(k => (
               <div key={k} className={styles.fieldRow}>
                 <label className={styles.fieldLabel}>{k}</label>
@@ -111,7 +111,7 @@ export default function CalibrationPanel({ onClose }) {
           </section>
 
           <section className={styles.section}>
-            <div className={styles.sectionTitle}>TRANSLATION (m)</div>
+            <div className={styles.sectionTitle}>Translation (m)</div>
             {['X', 'Y', 'Z'].map((axis, i) => (
               <div key={axis} className={styles.fieldRow}>
                 <label className={styles.fieldLabel}>t{axis}</label>
@@ -126,7 +126,7 @@ export default function CalibrationPanel({ onClose }) {
           </section>
 
           <section className={styles.section}>
-            <div className={styles.sectionTitle}>ROTATION MATRIX</div>
+            <div className={styles.sectionTitle}>Rotation matrix</div>
             <div className={styles.matrix}>
               {cal.extrinsics.R.map((row, ri) =>
                 row.map((val, ci) => (
@@ -144,10 +144,10 @@ export default function CalibrationPanel({ onClose }) {
 
           <div className={styles.fileActions}>
             <button className={`btn ${saved ? 'active' : ''}`} onClick={saveJSON}>
-              {saved ? '✓ SAVED' : '↓ SAVE JSON'}
+              {saved ? '✓ Saved' : '↓ Save JSON'}
             </button>
             <button className="btn" onClick={() => fileRef.current.click()}>
-              ↑ LOAD JSON
+              ↑ Load JSON
             </button>
             <input ref={fileRef} type="file" accept=".json" hidden onChange={loadJSON} />
           </div>

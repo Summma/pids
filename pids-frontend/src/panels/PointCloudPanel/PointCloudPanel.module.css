@@ -28,7 +28,7 @@
 .title {
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0;
   color: var(--lidar-color);
   white-space: nowrap;
 }

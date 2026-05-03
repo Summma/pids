@@ -1,15 +1,36 @@
 .controls {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 12px;
   flex-wrap: nowrap;
   min-width: 0;
   overflow: hidden;
 }
 
 .controls :global(.btn) {
-  min-width: 34px;
-  padding-inline: 6px;
+  min-width: auto;
+  padding: 0;
+}
+
+.controlsOverlay {
+  position: absolute;
+  top: 12px;
+  right: 34px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  max-width: calc(100% - 320px);
+  color: #dedede;
+}
+
+.controlsOverlay :global(.btn) {
+  color: #d8d8d8;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.controlsOverlay :global(.btn:hover),
+.controlsOverlay :global(.btn.active) {
+  color: #ffffff;
 }
 
 .viewport {
@@ -17,7 +38,7 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: #080c10;
+  background: #080808;
   cursor: grab;
 }
 
@@ -32,20 +53,22 @@
 
 .readout {
   position: absolute;
-  left: 8px;
-  bottom: 8px;
+  left: 10px;
+  bottom: 10px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px;
-  background: rgba(13, 21, 32, 0.86);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-sec);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  max-width: calc(100% - 20px);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: #cfcfcf;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
   pointer-events: none;
+  backdrop-filter: blur(8px);
 }
 
 .heat {

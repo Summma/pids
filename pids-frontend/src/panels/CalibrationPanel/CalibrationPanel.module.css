@@ -28,7 +28,7 @@
 .title {
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0;
   color: var(--accent);
   white-space: nowrap;
 }
@@ -70,16 +70,15 @@
   gap: 8px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0;
   color: var(--text-dim);
-  text-transform: uppercase;
 }
 
 .viewHint {
   font-size: 10px;
   font-weight: 400;
   color: var(--text-dim);
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
 }
 
 .viewControls {
@@ -98,7 +97,7 @@
   gap: 8px;
   font-size: 10px;
   color: var(--text-sec);
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
 }
 
 .slider {
@@ -124,9 +123,8 @@
 .sectionTitle {
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0;
   color: var(--text-sec);
-  text-transform: uppercase;
   margin-bottom: 8px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border);

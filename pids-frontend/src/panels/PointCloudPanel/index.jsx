@@ -149,7 +149,7 @@ export default function PointCloudPanel({ lidarData, onClose }) {
   return (
     <div className={styles.overlay}>
       <div className={styles.toolbar}>
-        <span className={styles.title}>◈ 3D POINT CLOUD</span>
+        <span className={styles.title}>◈ 3D point cloud</span>
         <div className={styles.modes}>
           {COLOR_MODES.map((m, i) => (
             <button
@@ -157,7 +157,7 @@ export default function PointCloudPanel({ lidarData, onClose }) {
               className={`btn ${colorMode === i ? 'active' : ''}`}
               onClick={() => setColorMode(i)}
             >
-              {m.toUpperCase()}
+              {m}
             </button>
           ))}
         </div>
@@ -165,7 +165,7 @@ export default function PointCloudPanel({ lidarData, onClose }) {
           <span>{meta.n.toLocaleString()} pts</span>
           <span>{clusters.length} clusters</span>
         </div>
-        <button className="btn" onClick={onClose}>✕ CLOSE</button>
+        <button className="btn" onClick={onClose}>✕ Close</button>
       </div>
       <div ref={mountRef} className={styles.viewport} />
     </div>

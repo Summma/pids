@@ -1,8 +1,8 @@
 import styles from './ThreatPanel.module.css'
 
 const MODALITY_ICONS = {
-  thermal: { icon: '♨', label: 'THERM', cls: 'thermal' },
-  lidar:   { icon: '◈', label: 'LIDAR', cls: 'lidar'   },
+  thermal: { icon: '♨', label: 'Thermal', cls: 'thermal' },
+  lidar:   { icon: '◈', label: 'Lidar',   cls: 'lidar'   },
   rf:      { icon: '⫿', label: 'RF',    cls: 'rf'      },
 }
 
@@ -14,10 +14,10 @@ function confidenceColor(c) {
 }
 
 function confidenceLabel(c) {
-  if (c >= 0.8) return 'CRITICAL'
-  if (c >= 0.6) return 'HIGH'
-  if (c >= 0.4) return 'MEDIUM'
-  return 'LOW'
+  if (c >= 0.8) return 'Critical'
+  if (c >= 0.6) return 'High'
+  if (c >= 0.4) return 'Medium'
+  return 'Low'
 }
 
 export default function ThreatCard({ threat, selected, onClick }) {
@@ -61,10 +61,10 @@ export default function ThreatCard({ threat, selected, onClick }) {
       </div>
 
       <div className={styles.cardStats}>
-        <Stat label="RNG"  value={`${range.toFixed(1)} m`}  />
-        <Stat label="BRG"  value={`${bearing.toFixed(0)}°`} />
-        <Stat label="SPD"  value={`${speed.toFixed(1)} m/s`} />
-        <Stat label="AGE"  value={`${age_frames}f`}          />
+        <Stat label="Range" value={`${range.toFixed(1)} m`} />
+        <Stat label="Bearing" value={`${bearing.toFixed(0)}°`} />
+        <Stat label="Speed" value={`${speed.toFixed(1)} m/s`} />
+        <Stat label="Age" value={`${age_frames}f`} />
       </div>
     </div>
   )

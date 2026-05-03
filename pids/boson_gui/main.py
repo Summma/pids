@@ -47,7 +47,10 @@ from fusion import Extrinsics, ThermalIntrinsics, rasterize_lidar_to_camera
 from lidar import CHANNELS, LidarFrame, OusterThread
 from pointcloud_window import PointCloudWindow
 from rf_window import RFWindow
+from web_bridge import WebBridge
 from viewer import Viewer2D
+
+DEFAULT_LIDAR_HOST = "169.254.62.165"
 
 
 # --------------------------------------------------------------------------
@@ -55,8 +58,9 @@ from viewer import Viewer2D
 # --------------------------------------------------------------------------
 
 class ThermalPanel(QWidget):
-    def __init__(self, parent=None) -> None:
+    def __init__(self, web_bridge: Optional[WebBridge] = None, parent=None) -> None:
         super().__init__(parent)
+        self.web_bridge = web_bridge
         self.cam_thread: Optional[CameraThread] = None
         self.boson = BosonControl()
         self.frame_info: Optional[FrameInfo] = None
@@ -164,6 +168,8 @@ class ThermalPanel(QWidget):
     def _on_frame(self, frame: np.ndarray, radiometric: bool) -> None:
         self.last_radiometric = radiometric
         self.frame_count += 1
+        if self.web_bridge is not None:
+            self.web_bridge.update_thermal(frame)
         self.viewer.show_frame(frame)
 
     def _do_ffc(self) -> None:
@@ -230,16 +236,18 @@ class ThermalPanel(QWidget):
 # --------------------------------------------------------------------------
 
 class LidarPanel(QWidget):
-    def __init__(self, thermal_provider=None, parent=None) -> None:
+    def __init__(self, thermal_provider=None, web_bridge: Optional[WebBridge] = None, parent=None) -> None:
         super().__init__(parent)
         self.thread: Optional[OusterThread] = None
         self.last_frame: Optional[LidarFrame] = None
         self.cloud_window: Optional[PointCloudWindow] = None
         self.thermal_provider = thermal_provider  # callable: () -> Optional[np.ndarray]
+        self.web_bridge = web_bridge
 
         self.frame_count = 0
         self.fps_t0 = time.monotonic()
         self.fps = 0.0
+        self._auto_opened_cloud = False
         self._last_2d_draw_t = 0.0
         self._last_cloud_update_t = 0.0
         self._2d_draw_interval = 1.0 / 6.0
@@ -251,6 +259,7 @@ class LidarPanel(QWidget):
 
         # Connection
         self.host_edit = QLineEdit()
+        self.host_edit.setText(DEFAULT_LIDAR_HOST)
         self.host_edit.setPlaceholderText("hostname or IP (e.g. os-122xxxx.local)")
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.setCheckable(True)
@@ -311,6 +320,7 @@ class LidarPanel(QWidget):
         self.fps_timer = QTimer(self)
         self.fps_timer.timeout.connect(self._tick_status)
         self.fps_timer.start(500)
+        QTimer.singleShot(500, lambda: self.connect_btn.setChecked(True))
 
     def _toggle_connect(self, on: bool) -> None:
         if on:
@@ -346,17 +356,24 @@ class LidarPanel(QWidget):
     def _on_frame(self, frame: LidarFrame) -> None:
         self.last_frame = frame
         self.frame_count += 1
+        if self.web_bridge is not None:
+            self.web_bridge.update_lidar(frame)
 
         now = time.monotonic()
         if now - self._last_2d_draw_t >= self._2d_draw_interval:
             self._last_2d_draw_t = now
             self._redraw()
 
-        if (
+        if self.web_bridge is not None and self.cloud_window is None and not self._auto_opened_cloud:
+            self._auto_opened_cloud = True
+            self._open_cloud()
+
+        should_update_cloud = (
             self.cloud_window is not None
-            and self.cloud_window.isVisible()
+            and (self.cloud_window.isVisible() or self.web_bridge is not None)
             and now - self._last_cloud_update_t >= self._cloud_update_interval
-        ):
+        )
+        if should_update_cloud:
             self._last_cloud_update_t = now
             self.cloud_window.update_cloud(frame)
 
@@ -378,7 +395,10 @@ class LidarPanel(QWidget):
 
     def _open_cloud(self) -> None:
         if self.cloud_window is None:
-            self.cloud_window = PointCloudWindow(thermal_provider=self.thermal_provider)
+            self.cloud_window = PointCloudWindow(
+                thermal_provider=self.thermal_provider,
+                web_bridge=self.web_bridge,
+            )
             self.cloud_window.set_calibration(self.extr, self.intr)
         self.cloud_window.show()
         self.cloud_window.raise_()
@@ -446,9 +466,14 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("PIDS — Thermal + Lidar Operator GUI")
+        self.web_bridge = WebBridge()
+        self.web_bridge.start()
 
-        self.thermal = ThermalPanel()
-        self.lidar = LidarPanel(thermal_provider=lambda: self.thermal.viewer.last_display_bgr)
+        self.thermal = ThermalPanel(web_bridge=self.web_bridge)
+        self.lidar = LidarPanel(
+            thermal_provider=lambda: self.thermal.viewer.last_display_bgr,
+            web_bridge=self.web_bridge,
+        )
 
         root = QHBoxLayout()
         root.addWidget(self.thermal, 1)

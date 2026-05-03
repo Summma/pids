@@ -20,6 +20,7 @@ dist/
 
 # Virtual environments
 .venv/
+.venv-*/
 venv/
 env/
 ENV/
@@ -52,6 +53,21 @@ pids/yolo_person/snapshots/
 
 # Logs
 *.log
+
+# Local secrets / OAuth material
+.env
+.env.*
+client_secret*.json
+token.json
+application_default_credentials.json
+google_adc*.json
+
+# ML training artifacts
+ml/data/
+ml/runs/
+ml/checkpoints/
+ml/outputs/
+*.safetensors
 
 # IDE / editor
 .idea/

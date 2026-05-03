@@ -59,7 +59,7 @@
   align-items: center;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0;
   color: var(--lidar-color);
   margin-bottom: 8px;
 }

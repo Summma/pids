@@ -16,19 +16,19 @@ export default function ThreatPanel({ threatData }) {
   })
 
   const subtitle = threats.length > 0
-    ? `${threats.length} TRACK${threats.length > 1 ? 'S' : ''}`
-    : 'CLEAR'
+    ? `${threats.length} track${threats.length > 1 ? 's' : ''}`
+    : 'Clear'
 
   const controls = (
     <div className={styles.controls}>
-      <span className={styles.sortLabel}>SORT</span>
+      <span className={styles.sortLabel}>Sort</span>
       {['confidence', 'range', 'speed'].map(s => (
         <button
           key={s}
           className={`btn ${sortBy === s ? 'active' : ''}`}
           onClick={() => setSortBy(s)}
         >
-          {s.toUpperCase()}
+          {s}
         </button>
       ))}
     </div>
@@ -36,7 +36,7 @@ export default function ThreatPanel({ threatData }) {
 
   return (
     <PanelShell
-      title="THREAT FUSION"
+      title="Threat fusion"
       subtitle={subtitle}
       connState={connState}
       controls={controls}
@@ -45,7 +45,7 @@ export default function ThreatPanel({ threatData }) {
         {threats.length === 0 ? (
           <div className={styles.clear}>
             <span className={styles.clearIcon}>✓</span>
-            <span>PERIMETER CLEAR</span>
+            <span>Perimeter clear</span>
           </div>
         ) : (
           <div className={styles.cardList}>

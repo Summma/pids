@@ -13,6 +13,8 @@ export function useLidar() {
   const frameRef = useRef({ positions: posBuf, intensities: intBuf, n: 0 })
   const [meta, setMeta] = useState({ n: 0, seq: 0, ts: 0 })
   const [clusters, setClusters] = useState([])
+  const [detections, setDetections] = useState([])
+  const [detectionMeta, setDetectionMeta] = useState({ status: 'waiting for detector', source: '', elapsedMs: 0, ts: 0 })
 
   useEffect(() => {
     setOnMessage((e) => {
@@ -23,6 +25,16 @@ export function useLidar() {
         }
 
         const env = JSON.parse(e.data)
+        if (env.type === 'detections') {
+          setDetections(Array.isArray(env.boxes) ? env.boxes : [])
+          setDetectionMeta({
+            status: env.status ?? '',
+            source: env.source ?? env.mode ?? '',
+            elapsedMs: env.elapsed_ms ?? 0,
+            ts: env.ts ?? 0,
+          })
+          return
+        }
         if (env.type !== 'frame') return
 
         readJsonFrame(env, frameRef, setMeta)
@@ -33,7 +45,7 @@ export function useLidar() {
 
   const sendControl = (cmd) => send(JSON.stringify(cmd))
 
-  return { connState, frameRef, meta, clusters, sendControl }
+  return { connState, frameRef, meta, clusters, detections, detectionMeta, sendControl }
 }
 
 function readBinaryFrame(buffer, frameRef, setMeta, setClusters) {

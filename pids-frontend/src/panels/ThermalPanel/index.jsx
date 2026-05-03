@@ -81,18 +81,18 @@ export default function ThermalPanel({ thermalData }) {
         {PALETTE_NAMES.map(p => <option key={p} value={p}>{p.replace('_', ' ')}</option>)}
       </select>
       <button className="btn" onClick={triggerFFC}>FFC</button>
-      <button className="btn" onClick={snapshot}>SNAP</button>
+      <button className="btn" onClick={snapshot}>Snap</button>
       <button
         className={`btn ${recording ? 'danger' : ''}`}
         onClick={() => setRecording(r => !r)}
       >
-        {recording ? '⏹ STOP' : '⏺ REC'}
+        {recording ? '⏹ Stop' : '⏺ Record'}
       </button>
     </div>
   )
 
   return (
-    <PanelShell title="THERMAL" modality="thermal" connState={connState} controls={controls}>
+    <PanelShell title="Thermal" modality="thermal" connState={connState} controls={controls}>
       <div
         className={styles.viewport}
         onMouseMove={onMouseMove}
@@ -117,7 +117,7 @@ export default function ThermalPanel({ thermalData }) {
           <span className={styles.tempMax}>{meta.tMax.toFixed(1)} °C</span>
         </div>
 
-        {recording && <div className={styles.recIndicator}>⏺ REC</div>}
+        {recording && <div className={styles.recIndicator}>⏺ Recording</div>}
       </div>
     </PanelShell>
   )

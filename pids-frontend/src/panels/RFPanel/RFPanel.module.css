@@ -75,5 +75,5 @@
 .peakLabel {
   font-size: 9px;
   color: var(--warn);
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
 }

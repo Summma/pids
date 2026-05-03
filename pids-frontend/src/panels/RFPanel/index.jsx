@@ -30,17 +30,17 @@ export default function RFPanel({ rfData }) {
         className={`btn ${showWaterfall ? 'active' : ''}`}
         onClick={() => setShowWaterfall(w => !w)}
       >
-        FALL
+        Waterfall
       </button>
     </div>
   )
 
   const peakCount = peaks.length
-  const subtitle  = peakCount > 0 ? `${peakCount} EMITTER${peakCount > 1 ? 'S' : ''}` : undefined
+  const subtitle  = peakCount > 0 ? `${peakCount} emitter${peakCount > 1 ? 's' : ''}` : undefined
 
   return (
     <PanelShell
-      title="RF SPECTRUM"
+      title="RF spectrum"
       subtitle={subtitle}
       modality="rf"
       connState={connState}

@@ -7,7 +7,7 @@
 .sortLabel {
   font-size: 10px;
   color: var(--text-dim);
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
 }
 
 .body {
@@ -25,7 +25,7 @@
   gap: 8px;
   color: var(--text-dim);
   font-size: 11px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0;
 }
 
 .clearIcon {
@@ -76,7 +76,7 @@
   font-size: 12px;
   font-weight: 700;
   color: var(--text-pri);
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
   flex-shrink: 0;
 }
 
@@ -99,7 +99,7 @@
 .confLabel {
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0;
   flex-shrink: 0;
 }
 
@@ -139,7 +139,7 @@
 .statLabel {
   font-size: 9px;
   color: var(--text-dim);
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
 }
 
 .statVal {

@@ -169,7 +169,8 @@ class PickableGLView(gl.GLViewWidget if HAS_PG else QWidget):
         if moved or ev.button() != Qt.LeftButton or len(self.picking_centroids) == 0:
             return
         # Project centroids to screen, find nearest within threshold
-        proj = self.projectionMatrix()
+        viewport = self.getViewport()
+        proj = self.projectionMatrix(viewport, viewport)
         view = self.viewMatrix()
         m = proj * view
         w, h = self.width(), self.height()
@@ -195,6 +196,7 @@ class PointCloudWindow(QWidget):
     def __init__(
         self,
         thermal_provider: Optional[Callable[[], Optional[np.ndarray]]] = None,
+        web_bridge=None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -203,6 +205,7 @@ class PointCloudWindow(QWidget):
         self.resize(1200, 800)
 
         self.thermal_provider = thermal_provider  # callable -> latest BGR thermal frame
+        self.web_bridge = web_bridge
         self.cluster_params = ClusterParams()
         self.last_clusters: list[Cluster] = []
         self.last_detections: list[Detection] = []
@@ -217,7 +220,7 @@ class PointCloudWindow(QWidget):
         self.detector_status: str = "detector idle"
         self.detector_ok: bool = True
         self.detector_last_ok_t: float = 0.0
-        self.analysis_mode = "off"
+        self.analysis_mode = "indoor_human"
         self.selected_track_id: Optional[int] = None
         self.selected_source: Optional[str] = None
         self.max_display_points = 120_000
@@ -307,7 +310,7 @@ class PointCloudWindow(QWidget):
         # Display
         self.color_combo = QComboBox()
         self.color_combo.addItems(COLOR_MODES)
-        self.color_combo.setCurrentText("range")
+        self.color_combo.setCurrentText("thermal")
         self.color_combo.currentTextChanged.connect(self._redraw)
 
         self.size_spin = QSpinBox()
@@ -332,7 +335,7 @@ class PointCloudWindow(QWidget):
         # Object detection / clustering
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(ANALYSIS_MODES)
-        self.mode_combo.setCurrentText("off")
+        self.mode_combo.setCurrentText(self.analysis_mode)
         self.mode_combo.currentTextChanged.connect(self._on_analysis_mode_change)
 
         self.endpoint_edit = QLineEdit(DEFAULT_ENDPOINT)
@@ -496,6 +499,8 @@ class PointCloudWindow(QWidget):
         self.analysis_mode = mode
         self.selected_track_id = None
         self.selected_source = None
+        if self.web_bridge is not None:
+            self.web_bridge.update_detection_status(f"mode {mode}", mode=mode)
         if mode in ("pointpillars", "auto"):
             self.detector_ok = True
         self._ensure_workers()
@@ -737,6 +742,14 @@ class PointCloudWindow(QWidget):
         self.last_detections = detections
         self.last_detector_ms = elapsed_ms
         self.detector_status = status
+        if self.web_bridge is not None:
+            self.web_bridge.update_detections(
+                detections,
+                mode=self.analysis_mode,
+                source="pointpillars",
+                status=status,
+                elapsed_ms=elapsed_ms,
+            )
         self.detector_ok = True
         self.detector_last_ok_t = time.monotonic()
         self._log_box_diagnostics(detections, "pointpillars")
@@ -751,6 +764,15 @@ class PointCloudWindow(QWidget):
         self.last_human_ms = elapsed_ms
         self.human_status = status
         self.last_human_debug = debug
+        if self.web_bridge is not None:
+            self.web_bridge.update_detections(
+                humans,
+                mode=self.analysis_mode,
+                source="indoor_human",
+                status=status,
+                elapsed_ms=elapsed_ms,
+                debug_count=len(debug),
+            )
         self._log_box_diagnostics(humans, "indoor_human")
         self._maybe_auto_capture_failures()
         self._redraw()
@@ -759,12 +781,16 @@ class PointCloudWindow(QWidget):
         self.human_status = f"indoor human: {msg}"
         self.last_humans = []
         self.last_human_debug = []
+        if self.web_bridge is not None:
+            self.web_bridge.update_detection_status(self.human_status, mode=self.analysis_mode)
         self._redraw()
 
     def _on_detector_error(self, msg: str) -> None:
         self.detector_ok = False
         self.detector_status = f"detector: {msg}"
         self.last_detections = []
+        if self.web_bridge is not None:
+            self.web_bridge.update_detection_status(self.detector_status, mode=self.analysis_mode)
         if self.analysis_mode == "auto" and HAS_SKLEARN and self.worker is None:
             self.worker = ClusterWorker(self.cluster_params)
             self.worker.result.connect(self._on_clusters_ready)

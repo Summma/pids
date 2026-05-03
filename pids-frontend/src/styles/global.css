@@ -1,9 +1,42 @@
 @import './tokens.css';
 
+@font-face {
+  font-family: "Computer Modern Serif";
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url("../../node_modules/computer-modern/fonts/cmu-serif-500-roman.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Computer Modern Serif";
+  font-style: italic;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url("../../node_modules/computer-modern/fonts/cmu-serif-500-italic.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Computer Modern Serif";
+  font-style: normal;
+  font-weight: 600 700;
+  font-display: swap;
+  src: url("../../node_modules/computer-modern/fonts/cmu-serif-700-roman.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Computer Modern Serif";
+  font-style: italic;
+  font-weight: 600 700;
+  font-display: swap;
+  src: url("../../node_modules/computer-modern/fonts/cmu-serif-700-italic.woff2") format("woff2");
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  font-family: var(--font);
 }
 
 html, body, #root {
@@ -12,22 +45,20 @@ html, body, #root {
   overflow: hidden;
   background: var(--bg);
   color: var(--text-pri);
-  font-family: var(--font);
-  font-size: 13px;
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+select,
+input,
+textarea {
+  font: inherit;
 }
 
 button {
-  font-family: var(--font);
   cursor: pointer;
-}
-
-select {
-  font-family: var(--font);
-}
-
-input {
-  font-family: var(--font);
 }
 
 ::-webkit-scrollbar {
@@ -36,54 +67,54 @@ input {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--surface);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 2px;
+  background: var(--border-2);
+  border-radius: 999px;
 }
 
 /* Shared utility classes */
 .btn {
-  padding: 4px 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: var(--text-sec);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  transition: color 0.15s;
 }
 
 .btn:hover {
-  background: var(--surface-3);
-  border-color: var(--border-2);
   color: var(--text-pri);
 }
 
 .btn.active {
-  background: var(--accent-lo);
-  border-color: var(--accent);
-  color: var(--accent);
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-pri);
+  text-decoration: underline;
+  text-underline-offset: 5px;
 }
 
 .btn.danger {
-  background: rgba(255, 34, 68, 0.08);
-  border-color: var(--danger);
+  background: transparent;
+  border-color: transparent;
   color: var(--danger);
 }
 
 select.ctrl-select {
-  padding: 4px 8px;
-  background: var(--surface-2);
+  padding: 6px 8px;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-pri);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
   outline: none;
   transition: border-color 0.15s;
 }

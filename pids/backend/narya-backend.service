@@ -1,0 +1,15 @@
+[Unit]
+Description=Narya/PIDS headless Jetson sensor backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/narya/pids
+EnvironmentFile=-%h/narya/pids/pids/backend/jetson.env
+ExecStart=%h/narya/pids/pids/backend/run_jetson_backend.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,6 +1,8 @@
 import { useRef, useEffect } from 'react'
 import styles from './RFPanel.module.css'
 
+const CANVAS_FONT_9 = '9px "Computer Modern Serif", serif'
+
 export default function Spectrum({ fftRef, meta, peaks }) {
   const canvasRef = useRef(null)
 
@@ -41,7 +43,7 @@ export default function Spectrum({ fftRef, meta, peaks }) {
 
       // dB axis labels
       ctx.fillStyle = '#3d5a6e'
-      ctx.font      = '9px JetBrains Mono'
+      ctx.font      = CANVAS_FONT_9
       for (let db = Math.ceil(dbMin / 10) * 10; db <= dbMax; db += 20) {
         const y = padTop + plotH * (1 - (db - dbMin) / dbRange)
         ctx.fillText(`${db}`, 2, y + 3)
@@ -101,14 +103,14 @@ export default function Spectrum({ fftRef, meta, peaks }) {
         ctx.arc(x, y, 3, 0, Math.PI * 2)
         ctx.fill()
 
-        ctx.font      = '9px JetBrains Mono'
+        ctx.font      = CANVAS_FONT_9
         ctx.fillStyle = '#ffcc00'
         ctx.fillText(`${mhz} MHz`, x + 5, y - 2)
       })
 
       // Freq axis
       ctx.fillStyle = '#3d5a6e'
-      ctx.font      = '9px JetBrains Mono'
+      ctx.font      = CANVAS_FONT_9
       const startMHz = ((meta.centerFreq - halfBW) / 1e6).toFixed(1)
       const endMHz   = ((meta.centerFreq + halfBW) / 1e6).toFixed(1)
       const centMHz  = (meta.centerFreq / 1e6).toFixed(1)

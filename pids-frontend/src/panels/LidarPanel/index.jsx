@@ -6,8 +6,8 @@ import styles from './LidarPanel.module.css'
 
 const MAX_POINTS = 131072
 const COLOR_MODES = [
-  { key: 0, label: 'INT', title: 'intensity' },
-  { key: 1, label: 'HT', title: 'height' },
+  { key: 0, label: 'Intensity', title: 'intensity' },
+  { key: 1, label: 'Height', title: 'height' },
 ]
 
 const VERT = /* glsl */`
@@ -45,7 +45,7 @@ const FRAG = /* glsl */`
   }
 `
 
-export default function LidarPanel({ lidarData, onPopOut3D }) {
+export default function LidarPanel({ lidarData }) {
   const { connState, frameRef, meta } = lidarData
   const mountRef = useRef(null)
   const sceneRef = useRef(null)
@@ -162,14 +162,11 @@ export default function LidarPanel({ lidarData, onPopOut3D }) {
           {mode.label}
         </button>
       ))}
-      {onPopOut3D && (
-        <button className="btn" onClick={onPopOut3D} title="Open full 3D point cloud">POP</button>
-      )}
     </div>
   )
 
   return (
-    <PanelShell title="LIDAR" subtitle="3D SENSOR VIEW" modality="lidar" connState={connState} controls={controls}>
+    <PanelShell title="Lidar" subtitle="3D sensor view" modality="lidar" connState={connState} controls={controls}>
       <div className={styles.viewport}>
         <div ref={mountRef} className={styles.scene} />
         <div className={styles.ptCount}>{meta.n.toLocaleString()} pts</div>

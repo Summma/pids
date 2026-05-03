@@ -5,10 +5,11 @@ import styles from './FusionMapPanel.module.css'
 const WORLD_M = 60
 const GRID_STEP = 10
 const MAX_DRAW_PTS = 9000
+const CANVAS_FONT_10 = '10px "Computer Modern Serif", serif'
 const LAYERS = [
-  { key: 'fusion', label: 'FUSE' },
-  { key: 'occupancy', label: 'OCC' },
-  { key: 'tracks', label: 'TRK' },
+  { key: 'fusion', label: 'Fusion' },
+  { key: 'occupancy', label: 'Occupancy' },
+  { key: 'tracks', label: 'Tracks' },
 ]
 
 export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
@@ -26,8 +27,8 @@ export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
   }, [frame.tracks, threats])
 
   const subtitle = frame.map
-    ? `${frame.stats.mapped.toLocaleString()} CELLS`
-    : `${tracks.length} TRACK${tracks.length === 1 ? '' : 'S'}`
+    ? `${frame.stats.mapped.toLocaleString()} cells`
+    : `${tracks.length} track${tracks.length === 1 ? '' : 's'}`
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -84,15 +85,15 @@ export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
         </button>
       ))}
       <button className={`btn ${follow ? 'active' : ''}`} onClick={() => setFollow(f => !f)}>
-        FOL
+        Follow
       </button>
-      <button className="btn" onClick={resetMap}>RESET</button>
+      <button className="btn" onClick={resetMap}>Reset</button>
     </div>
   )
 
   return (
     <PanelShell
-      title="AREA MAP"
+      title="Area map"
       subtitle={subtitle}
       connState={connState}
       controls={controls}
@@ -100,9 +101,9 @@ export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
       <div className={styles.viewport}>
         <canvas ref={canvasRef} className={styles.canvas} onClick={handleClick} />
         <div className={styles.legend}>
-          <span><i className={styles.lidarSwatch} /> LIDAR</span>
-          <span><i className={styles.thermalSwatch} /> HEAT</span>
-          <span><i className={styles.threatSwatch} /> THREAT</span>
+          <span><i className={styles.lidarSwatch} /> Lidar</span>
+          <span><i className={styles.thermalSwatch} /> Heat</span>
+          <span><i className={styles.threatSwatch} /> Threat</span>
         </div>
         {selected && <TrackReadout track={selected} onClose={() => setSelected(null)} />}
       </div>
@@ -149,7 +150,7 @@ function makeView(w, h, pose, follow) {
 function drawGrid(ctx, w, h, view) {
   ctx.strokeStyle = '#132238'
   ctx.lineWidth = 1
-  ctx.font = '10px JetBrains Mono'
+  ctx.font = CANVAS_FONT_10
   ctx.fillStyle = '#3d5a6e'
 
   for (let v = -WORLD_M; v <= WORLD_M; v += GRID_STEP) {
@@ -252,7 +253,7 @@ function drawTracks(ctx, tracks, view, selected) {
     ctx.lineTo(x + vx * view.scale * 1.4, y - vz * view.scale * 1.4)
     ctx.stroke()
 
-    ctx.font = '10px JetBrains Mono'
+    ctx.font = CANVAS_FONT_10
     ctx.fillText(`T${track.id}`, x + 8, y - 8)
   })
 }
@@ -304,7 +305,7 @@ function TrackReadout({ track, onClose }) {
   return (
     <div className={styles.readout}>
       <div className={styles.readoutHeader}>
-        <span>TRACK T{track.id}</span>
+        <span>Track T{track.id}</span>
         <button onClick={onClose}>x</button>
       </div>
       <Row label="Confidence" value={`${Math.round(track.confidence * 100)}%`} />

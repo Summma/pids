@@ -6,11 +6,13 @@ Palantir edge sync service) which buffers them in a local SQLite store
 and syncs to Foundry every 5 seconds. If the network drops, detections
 keep accumulating locally and replay when the link returns.
 
-Two scripts:
+Three scripts:
 
 - **`detect_person.py`** — webcam → YOLOv8n → one JSON event per frame on stdout.
 - **`cam_uplink.py`** — reads stdin, enriches with live GPS, rate-limits, posts
   `create-cam-detected-person` actions to Lohi at `https://localhost:18380`.
+- **`camera_ws.py`** — webcam → JPEG frames on `ws://<jetson>:9091/camera`
+  for the frontend's real camera panel.
 
 ## Hardware
 
@@ -23,6 +25,7 @@ Two scripts:
 ## Setup
 
 ```bash
+python3 -m pip install aiohttp ultralytics opencv-python
 export FOUNDRY_TOKEN="<your foundry bearer JWT>"
 ```
 
@@ -38,6 +41,12 @@ python3 detect_person.py --max-frames 100             # short test run
 
 # full pipeline (detect → GPS-enrich → push to Lohi)
 python3 detect_person.py --quiet | python3 cam_uplink.py --push-interval 2.0
+
+# real camera websocket for the web UI (no mock/fallback)
+python3 camera_ws.py --device 0 --host 0.0.0.0 --port 9091
+
+# optional: stream frames with YOLO person boxes drawn on top
+python3 camera_ws.py --device 0 --overlay-yolo --host 0.0.0.0 --port 9091
 ```
 
 The model weights (`yolov8n.pt`, ~6 MB) auto-download on first run.
