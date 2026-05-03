@@ -1,0 +1,79 @@
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rfBody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.specWrap {
+  flex: 1.2;
+  min-height: 0;
+  position: relative;
+}
+
+.fallWrap {
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  position: relative;
+}
+
+.specCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #080c10;
+}
+
+.waterfallCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #080c10;
+}
+
+/* Peak list */
+.peakList {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  max-height: 80px;
+  overflow-y: auto;
+  padding: 4px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.peakItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: rgba(199, 125, 255, 0.08);
+  border: 1px solid rgba(199, 125, 255, 0.25);
+  border-radius: 10px;
+}
+
+.peakFreq {
+  font-size: 10px;
+  font-weight: 700;
+  color: #c77dff;
+}
+
+.peakPwr {
+  font-size: 10px;
+  color: var(--text-sec);
+}
+
+.peakLabel {
+  font-size: 9px;
+  color: var(--warn);
+  letter-spacing: 0.06em;
+}

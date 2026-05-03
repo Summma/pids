@@ -1,0 +1,48 @@
+:root {
+  /* Backgrounds */
+  --bg:        #080c10;
+  --surface:   #0d1520;
+  --surface-2: #131e2e;
+  --surface-3: #192438;
+
+  /* Borders */
+  --border:    #1e3a5f;
+  --border-2:  #2a4f7a;
+
+  /* Accent */
+  --accent:    #00d4ff;
+  --accent-lo: rgba(0, 212, 255, 0.08);
+  --accent-md: rgba(0, 212, 255, 0.16);
+
+  /* Semantic */
+  --live:    #00d4ff;
+  --warn:    #ff8c42;
+  --danger:  #ff2244;
+  --success: #00e676;
+
+  /* Threat levels */
+  --threat-low:    #00e676;
+  --threat-medium: #ffcc00;
+  --threat-high:   #ff8c42;
+  --threat-crit:   #ff2244;
+
+  /* Text */
+  --text-pri: #e8f4f8;
+  --text-sec: #6a8fa8;
+  --text-dim: #3d5a6e;
+
+  /* Modality colors */
+  --thermal-color: #ff6b35;
+  --lidar-color:   #00d4ff;
+  --rf-color:      #c77dff;
+
+  /* Font */
+  --font: 'JetBrains Mono', monospace;
+
+  /* Sizing */
+  --titlebar-h: 42px;
+  --panel-gap:  6px;
+  --threat-h:   180px;
+  --radius:     6px;
+  --radius-sm:  3px;
+}

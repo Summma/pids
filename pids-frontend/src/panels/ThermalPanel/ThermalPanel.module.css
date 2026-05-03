@@ -1,0 +1,87 @@
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  display: flex;
+  background: #000;
+  overflow: hidden;
+  cursor: crosshair;
+}
+
+.canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.crosshairTip {
+  position: absolute;
+  background: rgba(13, 21, 32, 0.85);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+}
+
+.tempBar {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(8, 12, 16, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 10px;
+  pointer-events: none;
+}
+
+.rampBar {
+  width: 80px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, #0044ff, #00aaff, #00ff88, #ffcc00, #ff2200);
+}
+
+.tempMin {
+  font-size: 10px;
+  color: #4488ff;
+  font-weight: 600;
+}
+
+.tempMax {
+  font-size: 10px;
+  color: #ff4422;
+  font-weight: 600;
+}
+
+.recIndicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 8px;
+  background: rgba(255, 34, 68, 0.15);
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--danger);
+  animation: recBlink 1s step-end infinite;
+}
+
+@keyframes recBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}

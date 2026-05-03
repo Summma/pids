@@ -1,11 +1,3 @@
-# Dependencies
-node_modules/
-pids-frontend/node_modules/
-
-# Frontend build output
-backend/static/
-pids-frontend/dist/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -17,6 +9,12 @@ __pycache__/
 .eggs/
 build/
 dist/
+develop-eggs/
+.installed.cfg
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
 
 # Virtual environments
 .venv/
@@ -40,15 +38,6 @@ htmlcov/
 # Jupyter
 .ipynb_checkpoints/
 
-# Project-specific captures from boson_gui
-pids/boson_gui/captures/
-boson_gui/captures/
-*.tiff
-*.npy
-
-# Logs
-*.log
-
 # IDE / editor
 .idea/
 .vscode/
@@ -56,4 +45,14 @@ boson_gui/captures/
 *.swo
 *~
 .DS_Store
+
+# Project-specific captures from boson_gui
+boson_gui/captures/
+*.tiff
+*.npy
+
+# Logs
+*.log
+
+# OS
 Thumbs.db

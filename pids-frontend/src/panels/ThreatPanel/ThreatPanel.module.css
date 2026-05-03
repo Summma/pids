@@ -1,0 +1,149 @@
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sortLabel {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+}
+
+.body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.clear {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.clearIcon {
+  font-size: 22px;
+  color: var(--success);
+}
+
+.cardList {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  align-content: flex-start;
+}
+
+/* ── Threat Card ── */
+.card {
+  flex: 0 0 auto;
+  width: 175px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  border-left: 3px solid var(--threat-color, var(--border));
+}
+
+.card:hover {
+  background: var(--surface-3);
+  border-color: var(--border-2);
+}
+
+.cardSelected {
+  background: rgba(0, 212, 255, 0.04);
+  border-color: var(--accent) !important;
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.trackId {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-pri);
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.modalityIcons {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+}
+
+.modalIcon {
+  font-size: 11px;
+  opacity: 0.3;
+}
+
+.thermal.modalIcon { color: var(--thermal-color); opacity: 1; }
+.lidar.modalIcon   { color: var(--lidar-color);   opacity: 1; }
+.rf.modalIcon      { color: var(--rf-color);       opacity: 1; }
+.modalInactive { opacity: 0.2; }
+
+.confLabel {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+
+.confBarWrap {
+  height: 3px;
+  background: var(--surface-3);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 2px;
+}
+
+.confBar {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.confPct {
+  font-size: 9px;
+  font-weight: 700;
+  text-align: right;
+  margin-bottom: 6px;
+}
+
+.cardStats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 8px;
+}
+
+.stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.statLabel {
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+}
+
+.statVal {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-pri);
+}

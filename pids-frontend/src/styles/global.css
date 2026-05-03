@@ -1,0 +1,93 @@
+@import './tokens.css';
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text-pri);
+  font-family: var(--font);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: var(--font);
+  cursor: pointer;
+}
+
+select {
+  font-family: var(--font);
+}
+
+input {
+  font-family: var(--font);
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+/* Shared utility classes */
+.btn {
+  padding: 4px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-sec);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn:hover {
+  background: var(--surface-3);
+  border-color: var(--border-2);
+  color: var(--text-pri);
+}
+
+.btn.active {
+  background: var(--accent-lo);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn.danger {
+  background: rgba(255, 34, 68, 0.08);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+select.ctrl-select {
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-pri);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+select.ctrl-select:focus {
+  border-color: var(--accent);
+}
