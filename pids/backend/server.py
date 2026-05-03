@@ -235,9 +235,15 @@ class LidarStreamer:
         self.xyz_lut = None
         self.seq = 0
         self._read_lock = threading.Lock()
+        self._latest_lock = threading.Lock()
+        self._frame_event = threading.Event()
+        self._stop_event = threading.Event()
+        self._reader_thread: Optional[threading.Thread] = None
+        self._reader_error = ""
         self._latest_points: Optional[np.ndarray] = None
         self._latest_intensities: Optional[np.ndarray] = None
         self._latest_ts = 0.0
+        self._latest_seq = 0
 
     def open(self) -> None:
         if not self.host:
@@ -253,6 +259,9 @@ class LidarStreamer:
         self.scans = iter(self.source)
 
     def close(self) -> None:
+        self._stop_event.set()
+        if self._reader_thread is not None and self._reader_thread is not threading.current_thread():
+            self._reader_thread.join(timeout=1.0)
         if self.source is not None:
             try:
                 self.source.close()
@@ -262,54 +271,104 @@ class LidarStreamer:
         self.scans = None
         self.xyz_lut = None
 
-    def read_json(self) -> str:
-        with self._read_lock:
-            if self.scans is None or self.xyz_lut is None:
-                self.open()
+    def start(self) -> None:
+        if self._reader_thread is not None and self._reader_thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._reader_thread = threading.Thread(target=self._reader_loop, name="lidar-reader", daemon=True)
+        self._reader_thread.start()
 
-            scan = self._next_scan()
-            points, intensities = self._extract_points(scan)
-            payload = pack_lidar(points, intensities, self.max_points)
-            self.seq += 1
-            return json.dumps(
-                {
-                    "type": "frame",
-                    "n": payload["n"],
-                    "data": payload["data"],
-                    "clusters": [],
-                    "seq": self.seq,
-                    "ts": time.time(),
-                },
-                separators=(",", ":"),
-            )
+    def status(self) -> dict[str, Any]:
+        with self._latest_lock:
+            age = time.time() - self._latest_ts if self._latest_ts else 0.0
+            return {
+                "reader_alive": bool(self._reader_thread and self._reader_thread.is_alive()),
+                "seq": int(self._latest_seq),
+                "latest_age_s": round(float(age), 3),
+                "latest_points": int(len(self._latest_points)) if self._latest_points is not None else 0,
+                "error": self._reader_error,
+            }
+
+    def _reader_loop(self) -> None:
+        last_error = ""
+        while not self._stop_event.is_set():
+            try:
+                with self._read_lock:
+                    if self.scans is None or self.xyz_lut is None:
+                        self.open()
+
+                    scan = self._next_scan()
+                    points, intensities = self._extract_points(scan)
+
+                now = time.time()
+                with self._latest_lock:
+                    self.seq += 1
+                    self._latest_seq = self.seq
+                    self._latest_points = points
+                    self._latest_intensities = intensities
+                    self._latest_ts = now
+                    self._reader_error = ""
+                self._frame_event.set()
+                time.sleep(self.period)
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                with self._latest_lock:
+                    self._reader_error = message
+                self._frame_event.set()
+                if message != last_error:
+                    print(f"lidar reader error: {message}", file=sys.stderr)
+                    last_error = message
+                try:
+                    if self.source is not None:
+                        self.source.close()
+                except Exception:
+                    pass
+                self.source = None
+                self.scans = None
+                self.xyz_lut = None
+                time.sleep(1.0)
+
+    def read_json(self) -> str:
+        _frame_bytes, points, intensities = self.read_binary_frame(self.max_points)
+        payload = pack_lidar(points, intensities, self.max_points)
+        with self._latest_lock:
+            seq = self._latest_seq
+            ts = self._latest_ts
+        return json.dumps(
+            {
+                "type": "frame",
+                "n": payload["n"],
+                "data": payload["data"],
+                "clusters": [],
+                "seq": seq,
+                "ts": ts,
+            },
+            separators=(",", ":"),
+        )
 
     def read_binary(self) -> bytes:
         frame_bytes, _points, _intensities = self.read_binary_frame()
         return frame_bytes
 
     def read_binary_frame(self, max_points: Optional[int] = None) -> tuple[bytes, np.ndarray, np.ndarray]:
-        with self._read_lock:
-            if self.scans is None or self.xyz_lut is None:
-                self.open()
+        self.start()
+        limit = clamp_lidar_max_points(max_points, self.max_points)
+        if self._latest_points is None:
+            self._frame_event.wait(timeout=8.0)
 
-            limit = clamp_lidar_max_points(max_points, self.max_points)
-            now = time.time()
-            if self._latest_points is not None and now - self._latest_ts < max(self.period * 0.75, 0.05):
-                points = self._latest_points
-                intensities = self._latest_intensities
-                payload, n = pack_lidar_binary(points, intensities, limit)
-                header = struct.pack("<4sIIId", b"PCLD", 1, self.seq, n, self._latest_ts)
-                return header + payload, points, intensities
+        with self._latest_lock:
+            points = self._latest_points
+            intensities = self._latest_intensities
+            seq = self._latest_seq
+            ts = self._latest_ts
+            error = self._reader_error
 
-            scan = self._next_scan()
-            points, intensities = self._extract_points(scan)
-            self._latest_points = points
-            self._latest_intensities = intensities
-            self._latest_ts = time.time()
-            payload, n = pack_lidar_binary(points, intensities, limit)
-            self.seq += 1
-            header = struct.pack("<4sIIId", b"PCLD", 1, self.seq, n, self._latest_ts)
-            return header + payload, points, intensities
+        if points is None or intensities is None:
+            raise RuntimeError(error or "waiting for lidar frame")
+
+        payload, n = pack_lidar_binary(points, intensities, limit)
+        header = struct.pack("<4sIIId", b"PCLD", 1, seq, n, ts)
+        return header + payload, points, intensities
 
     def _next_scan(self):
         while True:
@@ -2438,7 +2497,14 @@ async def lidar_ws(request: web.Request) -> web.WebSocketResponse:
     latest_background = background.status()
     try:
         while not ws.closed:
-            frame_bytes, points, intensities = await asyncio.to_thread(lidar.read_binary_frame, max_points)
+            try:
+                frame_bytes, points, intensities = await asyncio.to_thread(lidar.read_binary_frame, max_points)
+            except Exception as exc:
+                if not ws.closed:
+                    await ws.send_json({"type": "error", "message": str(exc), "lidar": lidar.status()})
+                await asyncio.sleep(1.0)
+                continue
+
             if await asyncio.to_thread(background.capture_if_requested, points):
                 latest_background = background.status()
 
@@ -2575,6 +2641,7 @@ async def health(request: web.Request) -> web.Response:
             "lidar_host": lidar.host,
             "lidar_default_max_points": lidar.max_points,
             "lidar_max_points_limit": LIDAR_MAX_POINTS,
+            "lidar_reader": lidar.status(),
             "lidar_background": background.status(),
             "camera_configured": camera.device is not None,
             "camera_device": camera.device,
@@ -2649,6 +2716,8 @@ def build_app(
         fps=lidar_fps,
         max_points=lidar_max_points,
     )
+    if lidar_host:
+        app["lidar_streamer"].start()
     app["lidar_background"] = LidarBackgroundSubtractor(
         voxel_size_m=BACKGROUND_VOXEL_SIZE_M,
         dilation=BACKGROUND_VOXEL_DILATION,
