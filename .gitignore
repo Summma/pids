@@ -46,6 +46,10 @@ boson_gui/captures/
 *.tiff
 *.npy
 
+# yolo_person model weights & sample frames
+*.pt
+pids/yolo_person/snapshots/
+
 # Logs
 *.log
 
