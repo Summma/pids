@@ -153,14 +153,19 @@ class LidarStreamer:
             scan_set = next(self.scans)
             if scan_set is None:
                 continue
-            if hasattr(scan_set, "field"):
-                return scan_set
+
+            # Ouster SDK 0.16+ yields a LidarScanSet, even for one sensor.
+            # Unwrap it before passing the scan into XYZLut.
             try:
                 scan = next((s for s in scan_set if s is not None), None)
             except TypeError:
                 scan = None
             if scan is not None:
                 return scan
+
+            # Older SDKs may yield a LidarScan directly.
+            if hasattr(scan_set, "field"):
+                return scan_set
 
     def _extract_points(self, scan) -> Tuple[np.ndarray, np.ndarray]:
         xyz = self.xyz_lut(scan).reshape(-1, 3).astype(np.float32)
