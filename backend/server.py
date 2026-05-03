@@ -105,6 +105,7 @@ INDOOR_DETECTION_MODES = {"indoor_human", "auto", "roi_thermal", "seated_roi", *
 POINTPILLARS_DETECTION_MODES = {"pointpillars", "auto", "roi_thermal", "seated_roi", *ADVANCED_ROI_DETECTION_MODES}
 LIDAR_MIN_POINTS = 1_000
 LIDAR_MAX_POINTS = 131_072
+MAX_LIDAR_WS_BUFFER_BYTES = 3_000_000
 
 SCENE_ANALYST_INSTRUCTION = """You are Narya's scene analyst. Use the current lidar/thermal 3D render, visible camera frame, and structured detector metadata to answer the operator's question.
 
@@ -167,6 +168,7 @@ class ThermalCamera:
         self.boson = None
         self.seq = 0
         self.last_packet: Optional[ThermalPacket] = None
+        self._read_lock = threading.Lock()
 
     def open(self) -> None:
         if self.device is None or self.device < 0:
@@ -198,17 +200,18 @@ class ThermalCamera:
             self.boson = None
 
     def read_packet(self) -> ThermalPacket:
-        if self.cap is None:
-            self.open()
+        with self._read_lock:
+            if self.cap is None:
+                self.open()
 
-        ok, frame = self.cap.read()
-        if not ok or frame is None:
-            raise RuntimeError("thermal frame grab failed")
+            ok, frame = self.cap.read()
+            if not ok or frame is None:
+                raise RuntimeError("thermal frame grab failed")
 
-        packet = normalize_thermal(frame)
-        self.seq += 1
-        self.last_packet = packet
-        return packet
+            packet = normalize_thermal(frame)
+            self.seq += 1
+            self.last_packet = packet
+            return packet
 
     def trigger_ffc(self) -> bool:
         if self.boson is None:
@@ -229,6 +232,7 @@ class LidarStreamer:
         self.scans = None
         self.xyz_lut = None
         self.seq = 0
+        self._read_lock = threading.Lock()
 
     def open(self) -> None:
         if not self.host:
@@ -254,39 +258,41 @@ class LidarStreamer:
         self.xyz_lut = None
 
     def read_json(self) -> str:
-        if self.scans is None or self.xyz_lut is None:
-            self.open()
+        with self._read_lock:
+            if self.scans is None or self.xyz_lut is None:
+                self.open()
 
-        scan = self._next_scan()
-        points, intensities = self._extract_points(scan)
-        payload = pack_lidar(points, intensities, self.max_points)
-        self.seq += 1
-        return json.dumps(
-            {
-                "type": "frame",
-                "n": payload["n"],
-                "data": payload["data"],
-                "clusters": [],
-                "seq": self.seq,
-                "ts": time.time(),
-            },
-            separators=(",", ":"),
-        )
+            scan = self._next_scan()
+            points, intensities = self._extract_points(scan)
+            payload = pack_lidar(points, intensities, self.max_points)
+            self.seq += 1
+            return json.dumps(
+                {
+                    "type": "frame",
+                    "n": payload["n"],
+                    "data": payload["data"],
+                    "clusters": [],
+                    "seq": self.seq,
+                    "ts": time.time(),
+                },
+                separators=(",", ":"),
+            )
 
     def read_binary(self) -> bytes:
         frame_bytes, _points, _intensities = self.read_binary_frame()
         return frame_bytes
 
     def read_binary_frame(self, max_points: Optional[int] = None) -> tuple[bytes, np.ndarray, np.ndarray]:
-        if self.scans is None or self.xyz_lut is None:
-            self.open()
+        with self._read_lock:
+            if self.scans is None or self.xyz_lut is None:
+                self.open()
 
-        scan = self._next_scan()
-        points, intensities = self._extract_points(scan)
-        payload, n = pack_lidar_binary(points, intensities, clamp_lidar_max_points(max_points, self.max_points))
-        self.seq += 1
-        header = struct.pack("<4sIIId", b"PCLD", 1, self.seq, n, time.time())
-        return header + payload, points, intensities
+            scan = self._next_scan()
+            points, intensities = self._extract_points(scan)
+            payload, n = pack_lidar_binary(points, intensities, clamp_lidar_max_points(max_points, self.max_points))
+            self.seq += 1
+            header = struct.pack("<4sIIId", b"PCLD", 1, self.seq, n, time.time())
+            return header + payload, points, intensities
 
     def _next_scan(self):
         while True:
@@ -350,6 +356,7 @@ class CameraStreamer:
         self.jpeg_quality = int(np.clip(jpeg_quality, 35, 95))
         self.cap: Optional[cv2.VideoCapture] = None
         self.seq = 0
+        self._read_lock = threading.Lock()
 
     def open(self) -> None:
         if self.device is None or str(self.device).strip() == "":
@@ -375,31 +382,32 @@ class CameraStreamer:
             self.cap = None
 
     def read_packet(self) -> str:
-        if self.cap is None:
-            self.open()
+        with self._read_lock:
+            if self.cap is None:
+                self.open()
 
-        ok, frame = self.cap.read()
-        if not ok or frame is None:
-            raise RuntimeError("camera frame grab failed")
+            ok, frame = self.cap.read()
+            if not ok or frame is None:
+                raise RuntimeError("camera frame grab failed")
 
-        ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
-        if not ok:
-            raise RuntimeError("camera JPEG encode failed")
+            ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
+            if not ok:
+                raise RuntimeError("camera JPEG encode failed")
 
-        h, w = frame.shape[:2]
-        self.seq += 1
-        return json.dumps(
-            {
-                "type": "frame",
-                "w": w,
-                "h": h,
-                "mime": "image/jpeg",
-                "data": base64.b64encode(encoded.tobytes()).decode("ascii"),
-                "seq": self.seq,
-                "ts": time.time(),
-            },
-            separators=(",", ":"),
-        )
+            h, w = frame.shape[:2]
+            self.seq += 1
+            return json.dumps(
+                {
+                    "type": "frame",
+                    "w": w,
+                    "h": h,
+                    "mime": "image/jpeg",
+                    "data": base64.b64encode(encoded.tobytes()).decode("ascii"),
+                    "seq": self.seq,
+                    "ts": time.time(),
+                },
+                separators=(",", ":"),
+            )
 
 
 class DetectionEngine:
@@ -515,6 +523,14 @@ class DetectionEngine:
         except Exception as exc:
             self._last_result = self._empty(f"detector error: {exc}")
         return self._last_result
+
+    def latest_result(self) -> dict:
+        return dict(self._last_result)
+
+    def should_process(self) -> bool:
+        if self.mode in ("off", "") or self._load_error:
+            return False
+        return time.monotonic() - self._last_run_t >= self.period
 
     def _configure_indoor_human(self) -> None:
         indoor, error = load_indoor_human_module()
@@ -2010,10 +2026,20 @@ def packet_json(packet: ThermalPacket, seq: int, calibration: Optional[dict[str,
     )
 
 
+def websocket_backpressured(request: web.Request, limit_bytes: int) -> bool:
+    transport = request.transport
+    if transport is None or transport.is_closing():
+        return True
+    try:
+        return int(transport.get_write_buffer_size()) > limit_bytes
+    except Exception:
+        return False
+
+
 async def thermal_ws(request: web.Request) -> web.WebSocketResponse:
     camera: ThermalCamera = request.app["thermal_camera"]
     calibration: dict[str, Any] = request.app.get("thermal_calibration", THERMAL_CALIBRATION)
-    ws = web.WebSocketResponse(heartbeat=15)
+    ws = web.WebSocketResponse(heartbeat=15, compress=False)
     await ws.prepare(request)
     await ws.send_json({"type": "calibration", "calibration": calibration, "seq": camera.seq, "ts": time.time()})
 
@@ -2050,15 +2076,44 @@ async def lidar_ws(request: web.Request) -> web.WebSocketResponse:
     detector = get_detection_engine(request.app, request.query.get("mode"))
     thermal: ThermalCamera = request.app["thermal_camera"]
     max_points = clamp_lidar_max_points(request.query.get("max_points"), lidar.max_points)
-    ws = web.WebSocketResponse(heartbeat=15)
+    ws = web.WebSocketResponse(heartbeat=15, compress=False)
     await ws.prepare(request)
 
+    detector_task: Optional[asyncio.Task] = None
+    latest_detections = detector.latest_result()
     try:
         while not ws.closed:
             frame_bytes, points, intensities = await asyncio.to_thread(lidar.read_binary_frame, max_points)
-            await ws.send_bytes(frame_bytes)
-            detections = await asyncio.to_thread(detector.maybe_process, points, intensities, thermal.last_packet)
-            await ws.send_json({"type": "detections", **detections})
+            if not websocket_backpressured(request, MAX_LIDAR_WS_BUFFER_BYTES):
+                await ws.send_bytes(frame_bytes)
+
+            if detector_task is not None and detector_task.done():
+                try:
+                    latest_detections = detector_task.result()
+                except Exception as exc:
+                    latest_detections = detector._empty(f"detector task error: {exc}")
+                detector_task = None
+
+            await ws.send_json(
+                {
+                    "type": "detections",
+                    **latest_detections,
+                    "detector_busy": detector_task is not None,
+                }
+            )
+
+            if detector_task is None and detector.should_process():
+                points_for_detection = points.copy()
+                intensities_for_detection = intensities.copy() if intensities is not None else None
+                thermal_packet = thermal.last_packet
+                detector_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        detector.maybe_process,
+                        points_for_detection,
+                        intensities_for_detection,
+                        thermal_packet,
+                    )
+                )
             await asyncio.sleep(lidar.period)
     except asyncio.CancelledError:
         raise
@@ -2066,12 +2121,15 @@ async def lidar_ws(request: web.Request) -> web.WebSocketResponse:
         print(f"lidar websocket error: {exc}", file=sys.stderr)
         if not ws.closed:
             await ws.send_json({"type": "error", "message": str(exc)})
+    finally:
+        if detector_task is not None and not detector_task.done():
+            detector_task.cancel()
     return ws
 
 
 async def camera_ws(request: web.Request) -> web.WebSocketResponse:
     camera: CameraStreamer = request.app["camera_streamer"]
-    ws = web.WebSocketResponse(heartbeat=15)
+    ws = web.WebSocketResponse(heartbeat=15, compress=False)
     await ws.prepare(request)
 
     try:
