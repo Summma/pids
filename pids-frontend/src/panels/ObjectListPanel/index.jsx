@@ -45,13 +45,14 @@ export default function ObjectListPanel({ lidarData, selectedObjectKey = '', onS
                     <div className={styles.evidence}>
                       {object.thermalUnavailable ? (
                         <span>Thermal unavailable</span>
+                      ) : Number.isFinite(object.thermalTempC) ? (
+                        <span>Temp {object.thermalTempC.toFixed(1)}°C</span>
                       ) : (
                         <>
                           <span>Thermal {percent(object.thermalScore)}</span>
                           <span>Cov {percent(object.thermalCoverage)}</span>
                           {object.thermalHotFraction > 0 && <span>Hot {percent(object.thermalHotFraction)}</span>}
                           {object.thermalMax > 0 && <span>Tmax {percent(object.thermalMax)}</span>}
-                          {Number.isFinite(object.thermalTempC) && <span>Temp {object.thermalTempC.toFixed(1)}°C</span>}
                         </>
                       )}
                       {object.pointpillarsSupport > 0 && <span>PP {percent(object.pointpillarsSupport)}</span>}
