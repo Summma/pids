@@ -60,6 +60,7 @@ export default function CalibrationPanel({
   const [lens, setLens] = useState('Boson 14mm (~50deg)')
   const [saved, setSaved] = useState(false)
   const [stats, setStats] = useState({ projected: 0, points: 0 })
+  const [webcamRotation, setWebcamRotation] = useState({ rollDeg: 0, pitchDeg: 0, yawDeg: 0 })
 
   useEffect(() => {
     setCal(activeCalibration)
@@ -101,9 +102,10 @@ export default function CalibrationPanel({
       cameraFrame: cameraSync,
       calibration: cal,
       channel,
+      webcamRotation,
     })
     setStats(rendered)
-  }, [cal, channel, lidarData?.meta?.seq, cameraReadySeq, cameraSyncTs, thermalSyncTs, lidarData?.frameRef])
+  }, [cal, channel, lidarData?.meta?.seq, cameraReadySeq, cameraSyncTs, thermalSyncTs, lidarData?.frameRef, webcamRotation])
 
   function commitCalibration(nextCalibration) {
     setCal(nextCalibration)
@@ -251,6 +253,37 @@ export default function CalibrationPanel({
           </section>
 
           <section className={styles.section}>
+            <div className={styles.sectionTitle}>Webcam rotation</div>
+            {[
+              ['rollDeg', 'roll (deg)', 0.5],
+              ['pitchDeg', 'pitch (deg)', 0.5],
+              ['yawDeg', 'yaw (deg)', 0.5],
+            ].map(([key, label, step]) => (
+              <div key={key} className={styles.fieldRow}>
+                <label className={styles.fieldLabel}>{label}</label>
+                <input
+                  type="number"
+                  step={step}
+                  className={styles.fieldInput}
+                  value={webcamRotation[key]}
+                  onChange={event => setWebcamRotation(prev => ({ ...prev, [key]: Number(event.target.value) }))}
+                />
+              </div>
+            ))}
+            <div className={styles.readout}>
+              fov {WEBCAM_HFOV_DEG.toFixed(0)}deg · small-angle approx (yaw/pitch shift, roll rotation)
+            </div>
+            <div className={styles.fileActions}>
+              <button
+                className="btn"
+                onClick={() => setWebcamRotation({ rollDeg: 0, pitchDeg: 0, yawDeg: 0 })}
+              >
+                Reset webcam
+              </button>
+            </div>
+          </section>
+
+          <section className={styles.section}>
             <div className={styles.sectionTitle}>Calibration</div>
             <div className={styles.readout}>Source: {sourceText}</div>
             <div className={styles.fileActions}>
@@ -269,7 +302,7 @@ export default function CalibrationPanel({
   )
 }
 
-function renderCalibrationCanvas({ canvas, thermalCanvasRef, cameraImage, lidarFrame, thermalFrame, cameraFrame, calibration, channel }) {
+function renderCalibrationCanvas({ canvas, thermalCanvasRef, cameraImage, lidarFrame, thermalFrame, cameraFrame, calibration, channel, webcamRotation }) {
   const intr = calibration.intr
   const width = intr.width
   const height = intr.height
@@ -291,7 +324,7 @@ function renderCalibrationCanvas({ canvas, thermalCanvasRef, cameraImage, lidarF
   }
 
   drawThermalFrame(ctx, thermalCanvasRef, thermalFrame, width, height, width, 0)
-  drawCameraFrame(ctx, cameraImage, width, height, width * 2, 0, calibration)
+  drawCameraFrame(ctx, cameraImage, width, height, width * 2, 0, calibration, webcamRotation)
   drawPersonOverlay(ctx, cameraFrame, calibration, width, height)
   drawPanelLabels(ctx, width)
   return { projected: lidar.projected, points: lidar.points }
@@ -476,7 +509,7 @@ function drawPanelLabels(ctx, paneWidth) {
   ctx.fillText('CAMERA', paneWidth * 2 + 10, 10)
 }
 
-function drawCameraFrame(ctx, cameraImage, paneWidth, paneHeight, dx, dy, calibration) {
+function drawCameraFrame(ctx, cameraImage, paneWidth, paneHeight, dx, dy, calibration, webcamRotation) {
   fillBlank(ctx, dx, dy, paneWidth, paneHeight)
   if (!cameraImage || !cameraImage.naturalWidth || !cameraImage.naturalHeight) return
   const srcW = cameraImage.naturalWidth
@@ -492,15 +525,41 @@ function drawCameraFrame(ctx, cameraImage, paneWidth, paneHeight, dx, dy, calibr
   // Clamp to source size in case the thermal lens is wider than the webcam.
   const cropW = Math.min(srcW, 2 * webcamFocalPx * Math.tan(thermalHfov / 2))
   const cropH = Math.min(srcH, 2 * webcamFocalPx * Math.tan(thermalVfov / 2))
-  const sx = (srcW - cropW) / 2
-  const sy = (srcH - cropH) / 2
+
+  // Yaw/pitch: shift the crop center inside the source frame using the
+  // small-angle pinhole approximation shift = focal_px * tan(angle).
+  // This is exact for translations, and a good approximation for visual
+  // alignment of small rotations (<~15deg) without doing a full homography.
+  const rot = webcamRotation || { rollDeg: 0, pitchDeg: 0, yawDeg: 0 }
+  const yawShiftPx = webcamFocalPx * Math.tan(degToRad(rot.yawDeg || 0))
+  const pitchShiftPx = webcamFocalPx * Math.tan(degToRad(rot.pitchDeg || 0))
+  let sx = (srcW - cropW) / 2 + yawShiftPx
+  let sy = (srcH - cropH) / 2 + pitchShiftPx
+  sx = Math.max(0, Math.min(srcW - cropW, sx))
+  sy = Math.max(0, Math.min(srcH - cropH, sy))
 
   const scale = Math.min(paneWidth / cropW, paneHeight / cropH)
   const drawW = cropW * scale
   const drawH = cropH * scale
   const offsetX = dx + (paneWidth - drawW) / 2
   const offsetY = dy + (paneHeight - drawH) / 2
+
+  // Roll: rotate the canvas around the pane center, clipped so we never
+  // draw outside the camera pane.
+  const rollDeg = rot.rollDeg || 0
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(dx, dy, paneWidth, paneHeight)
+  ctx.clip()
+  if (rollDeg) {
+    const cxPane = dx + paneWidth / 2
+    const cyPane = dy + paneHeight / 2
+    ctx.translate(cxPane, cyPane)
+    ctx.rotate(degToRad(rollDeg))
+    ctx.translate(-cxPane, -cyPane)
+  }
   ctx.drawImage(cameraImage, sx, sy, cropW, cropH, offsetX, offsetY, drawW, drawH)
+  ctx.restore()
 }
 
 function fillBlank(ctx, x, y, width, height) {
