@@ -17,6 +17,8 @@ const CHANNELS = [
   { key: 'range', label: 'Range' },
 ]
 
+const WEBCAM_HFOV_DEG = 55
+
 const DEFAULT_CALIBRATION = {
   intr: { width: 640, height: 512, fx: 686, fy: 686, cx: 320, cy: 256 },
   extr: { tx: 0, ty: 0, tz: 0, rollDeg: 0, pitchDeg: 0, yawDeg: 0 },
@@ -273,7 +275,7 @@ function renderCalibrationCanvas({ canvas, thermalCanvasRef, cameraImage, lidarF
   }
 
   drawThermalFrame(ctx, thermalCanvasRef, thermalFrame, width, height, width, 0)
-  drawCameraFrame(ctx, cameraImage, width, height, width * 2, 0)
+  drawCameraFrame(ctx, cameraImage, width, height, width * 2, 0, calibration)
   drawPanelLabels(ctx, width)
   return { projected: lidar.projected, points: lidar.points }
 }
@@ -402,17 +404,31 @@ function drawPanelLabels(ctx, paneWidth) {
   ctx.fillText('CAMERA', paneWidth * 2 + 10, 10)
 }
 
-function drawCameraFrame(ctx, cameraImage, width, height, dx, dy) {
-  fillBlank(ctx, dx, dy, width, height)
+function drawCameraFrame(ctx, cameraImage, paneWidth, paneHeight, dx, dy, calibration) {
+  fillBlank(ctx, dx, dy, paneWidth, paneHeight)
   if (!cameraImage || !cameraImage.naturalWidth || !cameraImage.naturalHeight) return
   const srcW = cameraImage.naturalWidth
   const srcH = cameraImage.naturalHeight
-  const scale = Math.min(width / srcW, height / srcH)
-  const drawW = srcW * scale
-  const drawH = srcH * scale
-  const offsetX = dx + (width - drawW) / 2
-  const offsetY = dy + (height - drawH) / 2
-  ctx.drawImage(cameraImage, offsetX, offsetY, drawW, drawH)
+
+  const intr = calibration.intr
+  const thermalHfov = 2 * Math.atan(intr.width / (2 * intr.fx))
+  const thermalVfov = 2 * Math.atan(intr.height / (2 * intr.fy))
+  const webcamHfov = degToRad(WEBCAM_HFOV_DEG)
+  const webcamFocalPx = (srcW / 2) / Math.tan(webcamHfov / 2)
+
+  // Crop a centered rect of the webcam frame that subtends the thermal FOV.
+  // Clamp to source size in case the thermal lens is wider than the webcam.
+  const cropW = Math.min(srcW, 2 * webcamFocalPx * Math.tan(thermalHfov / 2))
+  const cropH = Math.min(srcH, 2 * webcamFocalPx * Math.tan(thermalVfov / 2))
+  const sx = (srcW - cropW) / 2
+  const sy = (srcH - cropH) / 2
+
+  const scale = Math.min(paneWidth / cropW, paneHeight / cropH)
+  const drawW = cropW * scale
+  const drawH = cropH * scale
+  const offsetX = dx + (paneWidth - drawW) / 2
+  const offsetY = dy + (paneHeight - drawH) / 2
+  ctx.drawImage(cameraImage, sx, sy, cropW, cropH, offsetX, offsetY, drawW, drawH)
 }
 
 function fillBlank(ctx, x, y, width, height) {
