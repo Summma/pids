@@ -7,7 +7,7 @@ const STARTERS = [
   'Which tracks need attention?',
 ]
 
-export default function GeminiSidebar({ messages = [], busy = false, onSend }) {
+export default function GeminiSidebar({ messages = [], busy = false, onSend, onMissionBrief }) {
   const [draft, setDraft] = useState('')
 
   function submit(text) {
@@ -29,6 +29,14 @@ export default function GeminiSidebar({ messages = [], busy = false, onSend }) {
           <h2 className={styles.title}>Scene Analyst</h2>
           <p className={styles.subtitle}>Live context from the cameras,</p>
         </div>
+        <button
+          type="button"
+          className={styles.briefButton}
+          disabled={busy}
+          onClick={onMissionBrief}
+        >
+          Mission Brief
+        </button>
       </div>
 
       <div className={styles.thread}>

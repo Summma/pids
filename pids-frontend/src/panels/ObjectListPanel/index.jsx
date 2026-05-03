@@ -1,8 +1,10 @@
+import { useEffect, useRef } from 'react'
 import PanelShell from '@/components/PanelShell'
 import styles from './ObjectListPanel.module.css'
 
 export default function ObjectListPanel({ lidarData, selectedObjectKey = '', onSelectObject }) {
   const { connState, detections = [], detectionMeta = {} } = lidarData
+  const rowRefs = useRef(new Map())
   const objects = normalizeDetections(detections)
     .sort((a, b) => b.score - a.score)
     .slice(0, 12)
@@ -10,6 +12,11 @@ export default function ObjectListPanel({ lidarData, selectedObjectKey = '', onS
   const subtitle = objects.length
     ? `${objects.length} object${objects.length === 1 ? '' : 's'}`
     : detectionMeta.status || 'Waiting'
+
+  useEffect(() => {
+    const row = selectedObjectKey ? rowRefs.current.get(selectedObjectKey) : null
+    row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [selectedObjectKey])
 
   return (
     <PanelShell title="Objects" subtitle={subtitle} connState={connState} showStatusDot={false}>
@@ -20,6 +27,10 @@ export default function ObjectListPanel({ lidarData, selectedObjectKey = '', onS
               const selected = object.key === selectedObjectKey
               return (
                 <button
+                  ref={node => {
+                    if (node) rowRefs.current.set(object.key, node)
+                    else rowRefs.current.delete(object.key)
+                  }}
                   type="button"
                   className={`${styles.row} ${selected ? styles.rowActive : ''}`}
                   key={object.key}
@@ -32,35 +43,44 @@ export default function ObjectListPanel({ lidarData, selectedObjectKey = '', onS
                       {object.source}
                       {object.fusionNote ? ` · ${object.fusionNote.replaceAll('_', ' ')}` : ''}
                     </span>
-                    <div className={styles.geometry}>
-                      <span>Range {meters(object.range)}</span>
-                      <span>L {meters(object.length)}</span>
-                      <span>W {meters(object.width)}</span>
-                      <span>H {meters(object.height)}</span>
-                      <span>Center {object.center.map(metersCompact).join(', ')}</span>
-                      <span>Yaw {degrees(object.yaw)}</span>
-                      {Number.isFinite(object.supportPoints) && <span>Pts {object.supportPoints}</span>}
-                      {Number.isFinite(object.supportZSpan) && object.supportZSpan > 0 && <span>Z span {meters(object.supportZSpan)}</span>}
-                    </div>
-                    <div className={styles.evidence}>
-                      {object.thermalUnavailable ? (
-                        <span>Thermal unavailable</span>
-                      ) : Number.isFinite(object.thermalTempC) ? (
-                        <span>Temp {object.thermalTempC.toFixed(1)}°C</span>
-                      ) : (
-                        <>
-                          <span>Thermal {percent(object.thermalScore)}</span>
-                          <span>Cov {percent(object.thermalCoverage)}</span>
-                          {object.thermalHotFraction > 0 && <span>Hot {percent(object.thermalHotFraction)}</span>}
-                          {object.thermalMax > 0 && <span>Tmax {percent(object.thermalMax)}</span>}
-                        </>
-                      )}
-                      {object.pointpillarsSupport > 0 && <span>PP {percent(object.pointpillarsSupport)}</span>}
-                    </div>
+                    {selected ? (
+                      <>
+                        <div className={styles.geometry}>
+                          <span>Range {meters(object.range)}</span>
+                          <span>L {meters(object.length)}</span>
+                          <span>W {meters(object.width)}</span>
+                          <span>H {meters(object.height)}</span>
+                          <span>Center {object.center.map(metersCompact).join(', ')}</span>
+                          <span>Yaw {degrees(object.yaw)}</span>
+                          {Number.isFinite(object.supportPoints) && <span>Pts {object.supportPoints}</span>}
+                          {Number.isFinite(object.supportZSpan) && object.supportZSpan > 0 && <span>Z span {meters(object.supportZSpan)}</span>}
+                        </div>
+                        <div className={styles.evidence}>
+                          {object.thermalUnavailable ? (
+                            <span>Thermal unavailable</span>
+                          ) : Number.isFinite(object.thermalTempC) ? (
+                            <span>Temp {object.thermalTempC.toFixed(1)}C</span>
+                          ) : (
+                            <>
+                              <span>Thermal {percent(object.thermalScore)}</span>
+                              <span>Cov {percent(object.thermalCoverage)}</span>
+                              {object.thermalHotFraction > 0 && <span>Hot {percent(object.thermalHotFraction)}</span>}
+                              {object.thermalMax > 0 && <span>Tmax {percent(object.thermalMax)}</span>}
+                            </>
+                          )}
+                          {object.pointpillarsSupport > 0 && <span>PP {percent(object.pointpillarsSupport)}</span>}
+                        </div>
+                      </>
+                    ) : (
+                      <div className={styles.summary}>
+                        <span>{thermalActivityLabel(object)}</span>
+                        <span>{meters(object.range)}</span>
+                      </div>
+                    )}
                   </div>
                   <div className={styles.metrics}>
                     <span>Fusion {percent(object.fusionScore)}</span>
-                    <span>Model {percent(object.modelScore)}</span>
+                    <span>{selected ? `Model ${percent(object.modelScore)}` : `Thermal ${percent(object.thermalScore)}`}</span>
                   </div>
                 </button>
               )
@@ -157,4 +177,10 @@ function metersCompact(value) {
 
 function degrees(value) {
   return `${Math.round(value * 180 / Math.PI)}deg`
+}
+
+function thermalActivityLabel(object) {
+  if (object.thermalScore >= 0.48 && object.thermalCoverage >= 0.10) return 'Recent thermal evidence'
+  if (object.thermalCoverage >= 0.08) return 'Weak thermal evidence'
+  return 'Geometry-only'
 }

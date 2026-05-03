@@ -41,6 +41,32 @@
   line-height: 1.35;
 }
 
+.briefButton {
+  flex: 0 0 auto;
+  min-width: 108px;
+  height: 34px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--text-pri);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22);
+  transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+}
+
+.briefButton:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: #ffffff;
+}
+
+.briefButton:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .thread {
   flex: 1;
   min-height: 0;

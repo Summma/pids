@@ -38,6 +38,16 @@ const INITIAL_DISPLAY_CONFIG = {
   showThermalFov: SHOW_THERMAL_FOV,
 }
 
+const MISSION_BRIEF_PROMPT = `Generate a concise operator mission brief from the current live scene.
+
+Use this format:
+Current scene:
+Objects of interest:
+Thermal evidence:
+Recommended next action:
+
+Be direct and evidence-based. Call out uncertainty. Do not invent objects, locations, identities, weapons, or intent.`
+
 export default function App() {
   const [showCal,  setShowCal]  = useState(false)
   const [activeSensorView, setActiveSensorView] = useState('fusion')
@@ -120,8 +130,12 @@ export default function App() {
   }, [camera.connState, camera.frameAt, camera.frame, camera.error, camera.sendControl, lidarTs])
 
   function selectObject(objectKey) {
-    setSelectedObjectKey(objectKey)
-    setActiveSensorView('fusion')
+    setSelectedObjectKey(objectKey || '')
+    if (objectKey) setActiveSensorView('fusion')
+  }
+
+  function sendMissionBrief() {
+    askSceneAnalyst(MISSION_BRIEF_PROMPT, 'Mission brief')
   }
 
   function applyStreamSettings(nextStreamConfig) {
@@ -172,14 +186,14 @@ export default function App() {
     }
   }
 
-  async function askSceneAnalyst(message) {
+  async function askSceneAnalyst(message, displayText = message) {
     const text = message.trim()
     if (!text || analystBusy) return
 
     const userMessage = {
       id: `${Date.now()}-user`,
       role: 'user',
-      text,
+      text: displayText,
     }
     setAnalystMessages(prev => [...prev, userMessage])
     setAnalystBusy(true)
@@ -279,6 +293,7 @@ export default function App() {
                   lidarData={lidarWithYolo}
                   thermalData={syncedThermalData}
                   selectedObjectKey={selectedObjectKey}
+                  onSelectObject={selectObject}
                   thermalCalibrationOverride={thermalCalibrationOverride}
                   thermalPalette={displayConfig.thermalPalette}
                   showThermalFov={displayConfig.showThermalFov}
@@ -298,6 +313,7 @@ export default function App() {
               messages={analystMessages}
               busy={analystBusy}
               onSend={askSceneAnalyst}
+              onMissionBrief={sendMissionBrief}
             />
             <ObjectListPanel
               lidarData={lidarWithYolo}

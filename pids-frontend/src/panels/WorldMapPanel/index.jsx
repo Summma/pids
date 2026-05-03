@@ -111,6 +111,7 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
   lidarData,
   thermalData,
   selectedObjectKey = '',
+  onSelectObject,
   thermalCalibrationOverride = null,
   thermalPalette = 'iron',
   showThermalFov = true,
@@ -124,9 +125,14 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
   const { frameRef: thermalFrameRef, meta: thermalMeta, error: thermalError, connState: thermalState } = thermalData
   const mountRef = useRef(null)
   const sceneRef = useRef(null)
+  const onSelectObjectRef = useRef(onSelectObject)
   const [mode, setMode] = useState(0)
 
   const boxes = useMemo(() => normalizeDetections(detections), [detections])
+  const selectedBox = useMemo(
+    () => boxes.find(box => box.key === selectedObjectKey) ?? null,
+    [boxes, selectedObjectKey],
+  )
   const thermalCalibration = useMemo(
     () => normalizeThermalCalibration(thermalCalibrationOverride ?? thermalMeta.calibration),
     [thermalCalibrationOverride, thermalMeta.calibration],
@@ -134,6 +140,10 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
   const thermalConfirmed = boxes.filter(box => box.thermalScore >= 0.62 && box.thermalCoverage >= 0.12).length
   const thermalStatus = thermalError || (thermalState === 'live' ? `${thermalMeta.tMin.toFixed(1)}-${thermalMeta.tMax.toFixed(1)} C` : 'thermal offline')
   const subtitle = `${lidarMeta.n.toLocaleString()} pts · ${boxes.length} ${boxes.length === 1 ? 'box' : 'boxes'} · ${thermalConfirmed} heat-supported`
+
+  useEffect(() => {
+    onSelectObjectRef.current = onSelectObject
+  }, [onSelectObject])
 
   useEffect(() => {
     const el = mountRef.current
@@ -207,10 +217,46 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
 
     const boxGroup = new THREE.Group()
     scene.add(boxGroup)
+    const hitGroup = new THREE.Group()
+    scene.add(hitGroup)
+    const raycaster = new THREE.Raycaster()
+    const pointer = new THREE.Vector2()
+    let pointerDown = null
 
     function renderScene() {
       renderer.render(scene, camera)
     }
+
+    function pickObject(event) {
+      const rect = renderer.domElement.getBoundingClientRect()
+      if (!rect.width || !rect.height) return ''
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(pointer, camera)
+      const hit = raycaster.intersectObjects(hitGroup.children, false)[0]
+      return hit?.object?.userData?.objectKey ?? ''
+    }
+
+    function handlePointerDown(event) {
+      pointerDown = { x: event.clientX, y: event.clientY }
+    }
+
+    function handlePointerMove(event) {
+      renderer.domElement.style.cursor = pickObject(event) ? 'pointer' : 'grab'
+    }
+
+    function handlePointerUp(event) {
+      if (!pointerDown) return
+      const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y)
+      pointerDown = null
+      if (moved > 6) return
+      const objectKey = pickObject(event)
+      if (objectKey) onSelectObjectRef.current?.(objectKey)
+    }
+
+    renderer.domElement.addEventListener('pointerdown', handlePointerDown)
+    renderer.domElement.addEventListener('pointermove', handlePointerMove)
+    renderer.domElement.addEventListener('pointerup', handlePointerUp)
 
     const ro = new ResizeObserver(() => {
       const nextW = Math.max(1, el.offsetWidth)
@@ -234,6 +280,7 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
       thermalValue,
       thermalValid,
       boxGroup,
+      hitGroup,
       fovGroup,
       renderScene,
     }
@@ -241,8 +288,12 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
 
     return () => {
       ro.disconnect()
+      renderer.domElement.removeEventListener('pointerdown', handlePointerDown)
+      renderer.domElement.removeEventListener('pointermove', handlePointerMove)
+      renderer.domElement.removeEventListener('pointerup', handlePointerUp)
       controls.dispose()
       disposeGroup(boxGroup)
+      disposeGroup(hitGroup)
       disposeGroup(sceneRef.current?.fovGroup ?? fovGroup)
       geo.dispose()
       mat.dispose()
@@ -355,6 +406,38 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({
           {controls}
         </div>
         <div ref={mountRef} className={styles.scene} />
+        {selectedBox && (
+          <div className={styles.selectionCard}>
+            <div className={styles.selectionHeader}>
+              <div>
+                <div className={styles.selectionKicker}>Selected object</div>
+                <div className={styles.selectionTitle}>{selectedBox.label}</div>
+              </div>
+              <button
+                type="button"
+                className={styles.selectionClose}
+                aria-label="Clear selected object"
+                onClick={() => onSelectObject?.('')}
+              >
+                x
+              </button>
+            </div>
+            <div className={styles.selectionStatus}>{thermalActivityLabel(selectedBox)}</div>
+            <div className={styles.selectionGrid}>
+              <span>Fusion</span><strong>{percent(selectedBox.score)}</strong>
+              <span>Thermal</span><strong>{percent(selectedBox.thermalScore)}</strong>
+              <span>Coverage</span><strong>{percent(selectedBox.thermalCoverage)}</strong>
+              <span>Range</span><strong>{meters(selectedBox.range)}</strong>
+            </div>
+            <div className={styles.selectionMeta}>
+              {selectedBox.source}
+              {selectedBox.fusionNote ? ` · ${selectedBox.fusionNote.replaceAll('_', ' ')}` : ''}
+            </div>
+          </div>
+        )}
+        <div className={styles.clickHint}>
+          Click a box to inspect
+        </div>
         <div className={styles.readout}>
           <span className={styles.live}>{lidarMeta.n.toLocaleString()} pts</span>
           <span className={thermalError ? styles.warn : styles.heat}>{thermalStatus}</span>
@@ -409,16 +492,44 @@ function intOr(value, fallback, minValue) {
 
 function drawDetectionBoxes(ctx, boxes, selectedObjectKey) {
   disposeGroup(ctx.boxGroup)
+  disposeGroup(ctx.hitGroup)
   const viewport = ctx.renderer.getSize(new THREE.Vector2())
   boxes.forEach(box => {
     const pts = orientedBoxLines(box)
-    const color = detectionColor(box.label, box.score)
     const selected = box.key === selectedObjectKey
+    const color = selected ? 0xffffff : detectionColor(box.label, box.score)
     const line = selected
       ? makeWideBoxLine(pts, color, viewport)
       : makeThinBoxLine(pts, color)
     ctx.boxGroup.add(line)
+    ctx.hitGroup.add(makeBoxHitMesh(box))
   })
+}
+
+function makeBoxHitMesh(box) {
+  const corners = orientedBoxCorners(box)
+  const triangles = [
+    0, 1, 2, 0, 2, 3,
+    4, 6, 5, 4, 7, 6,
+    0, 4, 5, 0, 5, 1,
+    1, 5, 6, 1, 6, 2,
+    2, 6, 7, 2, 7, 3,
+    3, 7, 4, 3, 4, 0,
+  ]
+  const positions = triangles.flatMap(i => corners[i])
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.computeVertexNormals()
+  geometry.computeBoundingSphere()
+  const material = new THREE.MeshBasicMaterial({
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.userData.objectKey = box.key
+  return mesh
 }
 
 function makeThinBoxLine(points, color) {
@@ -456,6 +567,12 @@ function updateBoxMaterialResolution(group, width, height) {
 }
 
 function orientedBoxLines(box) {
+  const corners = orientedBoxCorners(box)
+  const edges = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]
+  return edges.map(i => corners[i])
+}
+
+function orientedBoxCorners(box) {
   const [dx, dy, dz] = box.size
   const hx = Math.max(dx * 0.5, 0.05)
   const hy = Math.max(dy * 0.5, 0.05)
@@ -466,7 +583,7 @@ function orientedBoxLines(box) {
   ]
   const c = Math.cos(box.yaw)
   const s = Math.sin(box.yaw)
-  const corners = local.map(([x, y, z]) => {
+  return local.map(([x, y, z]) => {
     const sensor = [
       c * x - s * y + box.center[0],
       s * x + c * y + box.center[1],
@@ -474,8 +591,6 @@ function orientedBoxLines(box) {
     ]
     return lidarToScene(sensor)
   })
-  const edges = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]
-  return edges.map(i => corners[i])
 }
 
 function lidarToScene(v) {
@@ -742,6 +857,7 @@ function normalizeDetections(items) {
       thermalScore: clamp01(item.thermal_score ?? 0),
       thermalCoverage: clamp01(item.thermal_coverage ?? 0),
       fusionNote: String(item.fusion_note ?? ''),
+      range: Math.hypot(center[0], center[1], center[2]),
     }
   }).filter(item => item.size.every(Number.isFinite) && item.center.every(Number.isFinite))
 }
@@ -790,6 +906,20 @@ function confidenceColor(confidence) {
   if (confidence >= 0.6) return 0xff8c42
   if (confidence >= 0.4) return 0xffcc00
   return 0x00e676
+}
+
+function thermalActivityLabel(box) {
+  if (box.thermalScore >= 0.48 && box.thermalCoverage >= 0.10) return 'Recent thermal evidence'
+  if (box.thermalCoverage >= 0.08) return 'Weak thermal evidence'
+  return 'Geometry-only detection'
+}
+
+function percent(value) {
+  return `${Math.round(clamp01(value) * 100)}%`
+}
+
+function meters(value) {
+  return `${Number(value || 0).toFixed(1)} m`
 }
 
 function clamp01(v) {

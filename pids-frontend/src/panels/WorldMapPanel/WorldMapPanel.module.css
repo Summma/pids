@@ -51,6 +51,104 @@
   height: 100%;
 }
 
+.selectionCard {
+  position: absolute;
+  right: 14px;
+  bottom: 44px;
+  z-index: 5;
+  width: min(280px, calc(100% - 28px));
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(8, 10, 13, 0.84);
+  color: #f5f5f5;
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.36);
+  backdrop-filter: blur(16px);
+}
+
+.selectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.selectionKicker {
+  margin-bottom: 4px;
+  color: rgba(245, 245, 245, 0.52);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.selectionTitle {
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.selectionClose {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.selectionClose:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.selectionStatus {
+  margin-top: 10px;
+  padding: 7px 9px;
+  border-radius: 999px;
+  background: rgba(255, 184, 0, 0.14);
+  color: #ffd56b;
+  font-size: 12px;
+  font-weight: 800;
+  width: fit-content;
+}
+
+.selectionGrid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 14px;
+  margin-top: 12px;
+  color: rgba(245, 245, 245, 0.62);
+  font-size: 12px;
+}
+
+.selectionGrid strong {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.selectionMeta {
+  margin-top: 11px;
+  color: rgba(245, 245, 245, 0.5);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.clickHint {
+  position: absolute;
+  right: 14px;
+  top: 52px;
+  z-index: 4;
+  color: rgba(245, 245, 245, 0.5);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+
 .readout {
   position: absolute;
   left: 10px;
@@ -101,5 +199,16 @@
   .controls {
     gap: 10px;
     flex-wrap: wrap;
+  }
+
+  .selectionCard {
+    left: 12px;
+    right: 12px;
+    bottom: 42px;
+    width: auto;
+  }
+
+  .clickHint {
+    display: none;
   }
 }

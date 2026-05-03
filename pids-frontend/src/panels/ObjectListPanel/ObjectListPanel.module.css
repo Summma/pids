@@ -71,6 +71,21 @@
   font-size: 11px;
 }
 
+.summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-sec);
+  font-size: 12px;
+}
+
+.summary span:first-child {
+  color: #ffb800;
+  font-weight: 700;
+}
+
 .geometry {
   display: flex;
   align-items: center;
@@ -82,7 +97,8 @@
 }
 
 .evidence span,
-.geometry span {
+.geometry span,
+.summary span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
