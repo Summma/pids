@@ -601,9 +601,9 @@ class CameraStreamer:
                     num_persons = len(persons)
                     self._last_persons = persons
                     self._has_yolo_result = True
-                    self._last_yolo_at = now
+                    self._last_yolo_at = time.time()
                 except Exception as exc:
-                    self._last_yolo_at = now
+                    self._last_yolo_at = time.time()
                     if not self._yolo_error:
                         self._yolo_error = f"{type(exc).__name__}: {exc}"
                         print(f"[camera] yolo inference failed: {self._yolo_error}", file=sys.stderr)
@@ -619,6 +619,7 @@ class CameraStreamer:
 
             h, w = frame.shape[:2]
             self.seq += 1
+            packet_ts = time.time()
             return json.dumps(
                 {
                     "type": "frame",
@@ -629,7 +630,7 @@ class CameraStreamer:
                     "mime": "image/jpeg",
                     "data": base64.b64encode(encoded.tobytes()).decode("ascii"),
                     "seq": self.seq,
-                    "ts": now,
+                    "ts": packet_ts,
                     "num_persons": num_persons,
                     "persons": persons,
                 },
