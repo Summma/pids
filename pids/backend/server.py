@@ -235,6 +235,9 @@ class LidarStreamer:
         self.xyz_lut = None
         self.seq = 0
         self._read_lock = threading.Lock()
+        self._latest_points: Optional[np.ndarray] = None
+        self._latest_intensities: Optional[np.ndarray] = None
+        self._latest_ts = 0.0
 
     def open(self) -> None:
         if not self.host:
@@ -289,11 +292,23 @@ class LidarStreamer:
             if self.scans is None or self.xyz_lut is None:
                 self.open()
 
+            limit = clamp_lidar_max_points(max_points, self.max_points)
+            now = time.time()
+            if self._latest_points is not None and now - self._latest_ts < max(self.period * 0.75, 0.05):
+                points = self._latest_points
+                intensities = self._latest_intensities
+                payload, n = pack_lidar_binary(points, intensities, limit)
+                header = struct.pack("<4sIIId", b"PCLD", 1, self.seq, n, self._latest_ts)
+                return header + payload, points, intensities
+
             scan = self._next_scan()
             points, intensities = self._extract_points(scan)
-            payload, n = pack_lidar_binary(points, intensities, clamp_lidar_max_points(max_points, self.max_points))
+            self._latest_points = points
+            self._latest_intensities = intensities
+            self._latest_ts = time.time()
+            payload, n = pack_lidar_binary(points, intensities, limit)
             self.seq += 1
-            header = struct.pack("<4sIIId", b"PCLD", 1, self.seq, n, time.time())
+            header = struct.pack("<4sIIId", b"PCLD", 1, self.seq, n, self._latest_ts)
             return header + payload, points, intensities
 
     def _next_scan(self):
