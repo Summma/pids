@@ -70,13 +70,17 @@ ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_GEMINI_IMAGE_BYTES = 6 * 1024 * 1024
 MAX_GEMINI_IMAGES = 4
 DATA_URL_RE = re.compile(r"^data:(?P<mime>[-\w.+/]+);base64,(?P<data>.*)$", re.S)
-DETECTION_MODES = ("off", "indoor_human", "pointpillars", "auto")
+DETECTION_MODES = ("off", "indoor_human", "roi_thermal", "seated_roi", "pointpillars", "auto")
 DETECTION_MODE_LABELS = {
     "off": "Off",
     "indoor_human": "Indoor ROI",
+    "roi_thermal": "Thermal ROI",
+    "seated_roi": "Seated ROI",
     "pointpillars": "PointPillars",
     "auto": "Auto fusion",
 }
+INDOOR_DETECTION_MODES = {"indoor_human", "auto", "roi_thermal", "seated_roi"}
+POINTPILLARS_DETECTION_MODES = {"pointpillars", "auto", "roi_thermal", "seated_roi"}
 LIDAR_MIN_POINTS = 1_000
 LIDAR_MAX_POINTS = 131_072
 
@@ -400,9 +404,9 @@ class DetectionEngine:
         self._pointpillars_error = ""
         self._load_error = ""
 
-        if mode in ("indoor_human", "auto"):
+        if mode in INDOOR_DETECTION_MODES:
             self._configure_indoor_human()
-        if mode in ("pointpillars", "auto"):
+        if mode in POINTPILLARS_DETECTION_MODES:
             self._configure_pointpillars(pointpillars_endpoint, pointpillars_timeout_ms, pointpillars_max_points)
         if mode not in DETECTION_MODES and mode != "":
             self._load_error = f"unknown detection mode: {mode}"
@@ -432,12 +436,12 @@ class DetectionEngine:
             dt = scan_now - self._last_scan_t
             self._last_scan_t = scan_now
 
-            if self.mode in ("pointpillars", "auto"):
+            if self.mode in POINTPILLARS_DETECTION_MODES:
                 pointpillars_raw, pp_status = self._run_pointpillars(points, intensities, dt)
                 pointpillars_tracked = pointpillars_raw
                 status_parts.append(pp_status)
 
-            if self.mode in ("indoor_human", "auto"):
+            if self.mode in INDOOR_DETECTION_MODES:
                 if self._indoor is None:
                     status_parts.append(self._load_error or "indoor detector unavailable")
                 else:
@@ -463,6 +467,14 @@ class DetectionEngine:
                 ]
                 apply_thermal_fusion(extra, points, thermal_packet)
                 boxes.extend(extra)
+            elif self.mode == "roi_thermal":
+                before = len(boxes)
+                boxes = select_thermal_roi_detections(boxes)
+                status_parts.append(f"thermal ROI gate kept {len(boxes)}/{before}")
+            elif self.mode == "seated_roi":
+                before = len(boxes)
+                boxes = select_seated_roi_detections(boxes)
+                status_parts.append(f"seated ROI gate kept {len(boxes)}/{before}")
 
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self._last_result = {
@@ -485,6 +497,7 @@ class DetectionEngine:
             return
         self._indoor = indoor
         self._params = indoor.IndoorHumanParams()
+        configure_indoor_profile(self._params, self.mode)
         self._classifier = indoor.CropClassifier()
         self._tracker = indoor.HumanTrackTracker(self._params)
         self._last_result = self._empty("indoor human ready")
@@ -554,6 +567,23 @@ def get_detection_engine(app: web.Application, mode: Optional[str] = None) -> De
         )
         engines[selected_mode] = engine
     return engine
+
+
+def configure_indoor_profile(params: Any, mode: str) -> None:
+    """Tune the reusable ROI pipeline for the selected web model profile."""
+    if mode == "seated_roi":
+        params.voxel_size = 0.06
+        params.max_points = 26_000
+        params.eps = 0.36
+        params.min_samples = 6
+        params.min_cluster_points = 12
+        params.association_distance = 1.45
+        params.confirm_hits = 2
+        params.max_misses = 6
+    elif mode == "roi_thermal":
+        params.confirm_hits = 3
+        params.max_misses = 4
+        params.min_cluster_points = 16
 
 
 class GeminiSceneClient:
@@ -1325,6 +1355,76 @@ def apply_thermal_fusion(detections: list, points: np.ndarray, thermal_packet: O
         setattr(det, "fusion_score", float(fused))
         setattr(det, "fusion_note", note)
         setattr(det, "score", float(fused))
+
+
+def select_thermal_roi_detections(detections: list) -> list:
+    """Keep detections with real heat evidence or strong independent support."""
+    kept = []
+    for det in detections:
+        pp_support = float(getattr(det, "pointpillars_support", 0.0))
+        model_score = float(getattr(det, "model_score", getattr(det, "score", 0.0)))
+        support_points = int(getattr(det, "support_points", getattr(det, "n_points", 0)))
+        coverage = float(getattr(det, "thermal_coverage", 0.0))
+        thermal_score = float(getattr(det, "thermal_score", 0.0))
+        hot_fraction = float(getattr(det, "thermal_hot_fraction", 0.0))
+        note = str(getattr(det, "fusion_note", ""))
+
+        thermal_confirms = coverage >= 0.14 and (
+            thermal_score >= 0.46 or hot_fraction >= 0.035
+        )
+        thermal_rejects = coverage >= 0.35 and thermal_score <= 0.26 and hot_fraction < 0.015
+        independent_support = (
+            pp_support >= 0.34
+            or (model_score >= 0.82 and support_points >= 120)
+        )
+
+        if thermal_confirms or (not thermal_rejects and independent_support):
+            setattr(det, "fusion_note", append_fusion_note(note, "thermal_roi"))
+            setattr(det, "source", "roi_thermal")
+            kept.append(det)
+    return kept
+
+
+def select_seated_roi_detections(detections: list) -> list:
+    """Prefer seated-person / occupied-chair hypotheses with heat or strong geometry."""
+    kept = []
+    for det in detections:
+        label = str(getattr(det, "class_name", getattr(det, "label", ""))).lower()
+        pp_support = float(getattr(det, "pointpillars_support", 0.0))
+        model_score = float(getattr(det, "model_score", getattr(det, "score", 0.0)))
+        support_points = int(getattr(det, "support_points", getattr(det, "n_points", 0)))
+        coverage = float(getattr(det, "thermal_coverage", 0.0))
+        thermal_score = float(getattr(det, "thermal_score", 0.0))
+        hot_fraction = float(getattr(det, "thermal_hot_fraction", 0.0))
+        note = str(getattr(det, "fusion_note", ""))
+
+        seated_like = "seated" in label or "occupied" in label or "chair" in label
+        standing_like = "standing" in label or "person" in label or "pedestrian" in label
+        thermal_confirms = coverage >= 0.12 and (
+            thermal_score >= 0.42 or hot_fraction >= 0.03
+        )
+        strong_geometry = model_score >= 0.74 and support_points >= 75
+        cool_covered_roi = coverage >= 0.38 and thermal_score <= 0.25 and hot_fraction < 0.012
+
+        keep = False
+        if seated_like:
+            keep = thermal_confirms or pp_support >= 0.28 or (strong_geometry and not cool_covered_roi)
+        elif standing_like:
+            keep = thermal_confirms or pp_support >= 0.42
+
+        if keep:
+            setattr(det, "fusion_note", append_fusion_note(note, "seated_roi"))
+            setattr(det, "source", "seated_roi")
+            kept.append(det)
+    return kept
+
+
+def append_fusion_note(note: str, suffix: str) -> str:
+    if not note:
+        return suffix
+    if suffix in note.split("+"):
+        return note
+    return f"{note}+{suffix}"
 
 
 def thermal_metrics_for_detection(

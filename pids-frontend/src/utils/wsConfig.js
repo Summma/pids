@@ -20,6 +20,16 @@ export const DETECTION_MODE_OPTIONS = [
     title: 'Geometry-based indoor seated/standing candidate detector with thermal fusion',
   },
   {
+    value: 'roi_thermal',
+    label: 'Thermal ROI',
+    title: 'Indoor ROI detector gated by projected thermal evidence to reduce furniture false positives',
+  },
+  {
+    value: 'seated_roi',
+    label: 'Seated ROI',
+    title: 'Seated-person and occupied-chair ROI profile with denser clustering and thermal support',
+  },
+  {
     value: 'pointpillars',
     label: 'PointPillars',
     title: 'Jetson PointPillars detector with thermal fusion',
