@@ -1,191 +1,230 @@
 import { useRef, useEffect, useState } from 'react'
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import PanelShell from '@/components/PanelShell'
 import styles from './LidarPanel.module.css'
 
-const CHANNELS   = [
-  { key: 'range', label: 'RNG' },
-  { key: 'signal', label: 'SIG' },
-  { key: 'reflectivity', label: 'REFL' },
-  { key: 'near-ir', label: 'NIR' },
+const MAX_POINTS = 131072
+const COLOR_MODES = [
+  { key: 0, label: 'INT', title: 'intensity' },
+  { key: 1, label: 'HT', title: 'height' },
 ]
-const RANGE_MAX  = 50   // metres
-const RING_COUNT = 4
 
-function rangeColor(intensity, channel) {
-  const v = Math.max(0, Math.min(1, intensity))
-  if (channel === 'range') {
-    const r = Math.round(v * 255)
-    return `rgb(${r}, ${Math.round((1 - v) * 120)}, ${Math.round((1 - v) * 255)})`
+const VERT = /* glsl */`
+  uniform float uMode;
+  attribute float intensity;
+  varying vec3 vColor;
+
+  vec3 ramp(float u) {
+    vec3 c0 = vec3(0.000, 0.267, 1.000);
+    vec3 c1 = vec3(0.000, 0.667, 1.000);
+    vec3 c2 = vec3(0.000, 1.000, 0.533);
+    vec3 c3 = vec3(1.000, 0.800, 0.000);
+    vec3 c4 = vec3(1.000, 0.133, 0.000);
+    u = clamp(u, 0.0, 1.0);
+    if (u < 0.25) return mix(c0, c1, u / 0.25);
+    if (u < 0.50) return mix(c1, c2, (u - 0.25) / 0.25);
+    if (u < 0.75) return mix(c2, c3, (u - 0.50) / 0.25);
+                  return mix(c3, c4, (u - 0.75) / 0.25);
   }
-  if (channel === 'signal' || channel === 'near-ir') {
-    const g = Math.round(v * 255)
-    return `rgb(0, ${g}, ${Math.round((1 - v) * 100)})`
+
+  void main() {
+    if (uMode < 0.5) vColor = ramp(intensity);
+    else             vColor = ramp((position.y + 2.0) / 4.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = 2.0;
   }
-  // reflectivity
-  const hot = Math.round(v * 255)
-  return `rgb(${hot}, ${Math.round(v * 140)}, 0)`
-}
+`
+
+const FRAG = /* glsl */`
+  varying vec3 vColor;
+  void main() {
+    float d = length(gl_PointCoord - vec2(0.5));
+    if (d > 0.5) discard;
+    gl_FragColor = vec4(vColor, 0.92);
+  }
+`
 
 export default function LidarPanel({ lidarData, onPopOut3D }) {
-  const { connState, frameRef, meta, clusters } = lidarData
-  const canvasRef = useRef(null)
-  const [channel, setChannel] = useState('range')
-  const [selectedCluster, setSelectedCluster] = useState(null)
+  const { connState, frameRef, meta } = lidarData
+  const mountRef = useRef(null)
+  const sceneRef = useRef(null)
+  const [colorMode, setColorMode] = useState(0)
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx    = canvas.getContext('2d')
+    const el = mountRef.current
+    if (!el) return
 
+    const width = Math.max(1, el.offsetWidth)
+    const height = Math.max(1, el.offsetHeight)
+    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+    renderer.setSize(width, height)
+    renderer.setClearColor(0x080c10)
+    el.appendChild(renderer.domElement)
+
+    const scene = new THREE.Scene()
+    scene.fog = new THREE.Fog(0x080c10, 45, 100)
+
+    const camera = new THREE.PerspectiveCamera(58, width / height, 0.1, 180)
+    camera.position.set(-14, 8, 18)
+    camera.lookAt(0, 0, 0)
+
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = false
+    controls.target.set(0, 0, 8)
+    controls.minDistance = 4
+    controls.maxDistance = 80
+    controls.addEventListener('change', () => renderScene())
+
+    const grid = new THREE.GridHelper(60, 30, 0x1e3a5f, 0x102033)
+    scene.add(grid)
+    scene.add(makeSensorModel())
+    scene.add(makeRangeRings())
+    scene.add(new THREE.AmbientLight(0x88aacc, 0.9))
+
+    const pos = new Float32Array(MAX_POINTS * 3)
+    const intn = new Float32Array(MAX_POINTS)
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    geo.setAttribute('intensity', new THREE.BufferAttribute(intn, 1))
+    geo.setDrawRange(0, 0)
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uMode: { value: colorMode } },
+      vertexShader: VERT,
+      fragmentShader: FRAG,
+      transparent: true,
+      depthWrite: false,
+    })
+
+    const cloud = new THREE.Points(geo, mat)
+    scene.add(cloud)
+
+    function renderScene() {
+      renderer.render(scene, camera)
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      const nextW = Math.max(1, el.offsetWidth)
+      const nextH = Math.max(1, el.offsetHeight)
+      camera.aspect = nextW / nextH
+      camera.updateProjectionMatrix()
+      renderer.setSize(nextW, nextH)
+      renderScene()
+    })
+    resizeObserver.observe(el)
+
+    sceneRef.current = { renderer, scene, camera, controls, geo, mat, pos, intn, renderScene }
+    renderScene()
+
+    return () => {
+      resizeObserver.disconnect()
+      controls.dispose()
+      geo.dispose()
+      mat.dispose()
+      renderer.dispose()
+      el.removeChild(renderer.domElement)
+      sceneRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const ctx = sceneRef.current
     const frame = frameRef.current
-    const w = canvas.offsetWidth
-    const h = canvas.offsetHeight
-    canvas.width  = w
-    canvas.height = h
+    if (!ctx || !frame || frame.n === 0) return
 
-    ctx.fillStyle = '#080c10'
-    ctx.fillRect(0, 0, w, h)
+    const n = Math.min(frame.n, MAX_POINTS)
+    ctx.pos.set(frame.positions.subarray(0, n * 3))
+    ctx.intn.set(frame.intensities.subarray(0, n))
+    ctx.geo.attributes.position.needsUpdate = true
+    ctx.geo.attributes.intensity.needsUpdate = true
+    ctx.geo.setDrawRange(0, n)
+    ctx.renderScene()
+  }, [frameRef, meta.seq])
 
-    const cx = w / 2
-    const cy = h / 2
-    const scale = Math.min(w, h) / 2 / RANGE_MAX
-
-    // Range rings
-    ctx.strokeStyle = '#1e3a5f'
-    ctx.lineWidth   = 1
-    ctx.setLineDash([4, 4])
-    for (let r = 1; r <= RING_COUNT; r++) {
-      const pxr = (RANGE_MAX / RING_COUNT) * r * scale
-      ctx.beginPath()
-      ctx.arc(cx, cy, pxr, 0, Math.PI * 2)
-      ctx.stroke()
-      ctx.fillStyle = '#3d5a6e'
-      ctx.font = '9px JetBrains Mono'
-      ctx.fillText(`${(RANGE_MAX / RING_COUNT) * r}m`, cx + pxr + 3, cy - 3)
-    }
-    ctx.setLineDash([])
-
-    // Cardinal lines
-    ctx.strokeStyle = '#1e3a5f'
-    ctx.lineWidth = 1
-    ;[0, Math.PI / 2, Math.PI, Math.PI * 1.5].forEach(a => {
-      ctx.beginPath()
-      ctx.moveTo(cx, cy)
-      ctx.lineTo(cx + Math.cos(a) * RANGE_MAX * scale, cy + Math.sin(a) * RANGE_MAX * scale)
-      ctx.stroke()
-    })
-
-    // Origin
-    ctx.fillStyle = '#00d4ff'
-    ctx.beginPath()
-    ctx.arc(cx, cy, 3, 0, Math.PI * 2)
-    ctx.fill()
-
-    if (!frame || frame.n === 0) return
-
-    // Points — project XZ plane (bird's-eye)
-    const { positions, intensities, n } = frame
-    for (let i = 0; i < n; i++) {
-      const x = positions[i * 3]
-      const z = positions[i * 3 + 2]
-      const v = intensities[i]
-      const px = cx + x * scale
-      const py = cy - z * scale
-      if (px < 0 || px > w || py < 0 || py > h) continue
-      ctx.fillStyle = rangeColor(v, channel)
-      ctx.fillRect(px, py, 1.5, 1.5)
-    }
-
-    // Cluster overlays
-    clusters.forEach(cl => {
-      const px = cx + cl.centroid.x * scale
-      const py = cy - cl.centroid.z * scale
-      const isSelected = selectedCluster?.id === cl.id
-      ctx.strokeStyle = isSelected ? '#ffcc00' : '#00d4ff'
-      ctx.lineWidth   = isSelected ? 2 : 1
-      const r = Math.max(6, cl.radius * scale)
-      ctx.beginPath()
-      ctx.arc(px, py, r, 0, Math.PI * 2)
-      ctx.stroke()
-      ctx.fillStyle = isSelected ? '#ffcc00' : '#00d4ff'
-      ctx.font = '9px JetBrains Mono'
-      ctx.fillText(`T${cl.id}`, px + r + 2, py)
-    })
-  }, [channel, frameRef, meta.seq, clusters, selectedCluster])
-
-  const handleCanvasClick = (e) => {
-    const canvas = canvasRef.current
-    const rect   = canvas.getBoundingClientRect()
-    const mx = e.clientX - rect.left
-    const my = e.clientY - rect.top
-    const cx = canvas.width  / 2
-    const cy = canvas.height / 2
-    const scale = Math.min(canvas.width, canvas.height) / 2 / RANGE_MAX
-
-    const hit = clusters.find(cl => {
-      const px = cx + cl.centroid.x * scale
-      const py = cy - cl.centroid.z * scale
-      return Math.hypot(mx - px, my - py) < 20
-    })
-    setSelectedCluster(hit ?? null)
-  }
+  useEffect(() => {
+    const ctx = sceneRef.current
+    if (!ctx) return
+    ctx.mat.uniforms.uMode.value = colorMode
+    ctx.renderScene()
+  }, [colorMode])
 
   const controls = (
     <div className={styles.controls}>
-      {CHANNELS.map(ch => (
+      {COLOR_MODES.map(mode => (
         <button
-          key={ch.key}
-          className={`btn ${channel === ch.key ? 'active' : ''}`}
-          onClick={() => setChannel(ch.key)}
-          title={ch.key}
+          key={mode.key}
+          className={`btn ${colorMode === mode.key ? 'active' : ''}`}
+          onClick={() => setColorMode(mode.key)}
+          title={mode.title}
         >
-          {ch.label}
+          {mode.label}
         </button>
       ))}
       {onPopOut3D && (
-        <button className="btn" onClick={onPopOut3D} title="Open 3D point cloud">3D</button>
+        <button className="btn" onClick={onPopOut3D} title="Open full 3D point cloud">POP</button>
       )}
     </div>
   )
 
   return (
-    <PanelShell title="LIDAR" subtitle="BIRD'S EYE" modality="lidar" connState={connState} controls={controls}>
+    <PanelShell title="LIDAR" subtitle="3D SENSOR VIEW" modality="lidar" connState={connState} controls={controls}>
       <div className={styles.viewport}>
-        <canvas
-          ref={canvasRef}
-          className={styles.canvas}
-          onClick={handleCanvasClick}
-        />
-        {selectedCluster && (
-          <ClusterInspector cluster={selectedCluster} onClose={() => setSelectedCluster(null)} />
-        )}
+        <div ref={mountRef} className={styles.scene} />
         <div className={styles.ptCount}>{meta.n.toLocaleString()} pts</div>
       </div>
     </PanelShell>
   )
 }
 
-function ClusterInspector({ cluster, onClose }) {
-  return (
-    <div className={styles.inspector}>
-      <div className={styles.inspectorHeader}>
-        <span>CLUSTER T{cluster.id}</span>
-        <button onClick={onClose} className={styles.inspectorClose}>✕</button>
-      </div>
-      <Row label="Range"     value={`${cluster.range?.toFixed(1)} m`} />
-      <Row label="Footprint" value={`${cluster.footprint?.toFixed(2)} m²`} />
-      <Row label="Speed"     value={`${cluster.speed?.toFixed(2)} m/s`} />
-      <Row label="Points"    value={cluster.points} />
-      <Row label="Age"       value={`${cluster.age_frames} frames`} />
-    </div>
+function makeSensorModel() {
+  const group = new THREE.Group()
+
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.55, 0.7, 0.35, 32),
+    new THREE.MeshBasicMaterial({ color: 0x1b3147 })
   )
+  base.position.y = 0.18
+  group.add(base)
+
+  const head = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.34, 0.34, 0.62, 32),
+    new THREE.MeshBasicMaterial({ color: 0x00d4ff, wireframe: true })
+  )
+  head.position.y = 0.72
+  group.add(head)
+
+  const mast = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 0.8, 16),
+    new THREE.MeshBasicMaterial({ color: 0x6a8fa8 })
+  )
+  mast.position.y = 0.45
+  group.add(mast)
+
+  const forward = new THREE.ArrowHelper(
+    new THREE.Vector3(0, 0, 1),
+    new THREE.Vector3(0, 0.75, 0),
+    2.2,
+    0x00d4ff,
+    0.28,
+    0.14
+  )
+  group.add(forward)
+
+  return group
 }
 
-function Row({ label, value }) {
-  return (
-    <div className={styles.inspectorRow}>
-      <span className={styles.inspectorLabel}>{label}</span>
-      <span className={styles.inspectorVal}>{value}</span>
-    </div>
-  )
+function makeRangeRings() {
+  const group = new THREE.Group()
+  const material = new THREE.LineBasicMaterial({ color: 0x1e3a5f, transparent: true, opacity: 0.55 })
+  ;[10, 20, 30].forEach(radius => {
+    const points = []
+    for (let i = 0; i <= 96; i++) {
+      const a = (i / 96) * Math.PI * 2
+      points.push(new THREE.Vector3(Math.cos(a) * radius, 0.02, Math.sin(a) * radius))
+    }
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material))
+  })
+  return group
 }

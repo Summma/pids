@@ -4,7 +4,7 @@ import styles from './FusionMapPanel.module.css'
 
 const WORLD_M = 60
 const GRID_STEP = 10
-const MAX_DRAW_PTS = 18000
+const MAX_DRAW_PTS = 9000
 const LAYERS = [
   { key: 'fusion', label: 'FUSE' },
   { key: 'occupancy', label: 'OCC' },
@@ -35,7 +35,7 @@ export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
     const ctx = canvas.getContext('2d')
 
     const rect = canvas.getBoundingClientRect()
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
     const w = Math.max(1, Math.floor(rect.width * dpr))
     const h = Math.max(1, Math.floor(rect.height * dpr))
     if (canvas.width !== w || canvas.height !== h) {
@@ -92,7 +92,7 @@ export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
 
   return (
     <PanelShell
-      title="FUSION MAP"
+      title="AREA MAP"
       subtitle={subtitle}
       connState={connState}
       controls={controls}

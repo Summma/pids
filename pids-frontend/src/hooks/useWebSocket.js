@@ -25,7 +25,7 @@ export function useWebSocket(url) {
         connect()
       }, retryDelay.current)
     }
-    sock.onerror = () => setConnState('offline')
+    sock.onerror = () => setConnState('offline')  // browser logs the URL; no need to re-log here
     sock.onmessage = (e) => onMsgRef.current?.(e)
   }, [url])
 

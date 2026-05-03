@@ -1,554 +1,713 @@
-# Frontend Skill — Real-Time Thermal-Fused 3D World Viewer
-## Specification v2.0
+# Frontend Skill - Narya
+## Expert UI System For Real-Time Perimeter Intelligence
+
+Narya is not a dashboard skin. Narya is an operator-grade, real-time sensor-fusion interface for thermal, lidar, RF, calibration, mapping, and threat assessment. Every frontend decision must make the operator faster, calmer, and more certain.
+
+Use this skill whenever building, modifying, or reviewing the Narya frontend.
 
 ---
 
-## Framework Decision
+## Product Principle
 
-**Three.js r165 via importmap (ES modules). Single `index.html`. No build step.**
+Narya turns raw sensor streams into spatial understanding.
 
-```html
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
-  }
-}
-</script>
-<script type="module">
-  import * as THREE from 'three'
-  import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-  // ... all app code here
-</script>
+The frontend must answer four questions at a glance:
+
+1. What sensors are alive?
+2. What is the environment doing right now?
+3. What objects or signals matter?
+4. What should the operator inspect next?
+
+The UI should feel like an instrument panel, not a website. It should be dense, quiet, precise, and alive.
+
+---
+
+## Current Stack
+
+Use the existing React/Vite architecture.
+
+```text
+pids-frontend/
+  src/
+    App.jsx
+    hooks/
+    panels/
+    components/
+    styles/
+    utils/
 ```
 
-### Why Three.js wins
+Approved core tools:
 
-| Framework | Verdict | Reason |
-|---|---|---|
-| **Three.js + importmap** | ✅ USE THIS | OrbitControls built-in, BufferGeometry GPU path optimal, ShaderMaterial = free GPU thermal coloring |
-| React / Vue | ❌ | vDOM reconciler fights the 10fps buffer hot-path. `needsUpdate = true` must be zero-overhead |
-| Babylon.js | ❌ | 2.5× bundle, built for meshes/physics, no benefit for point clouds |
-| Deck.gl | ❌ | Geospatial-first, requires React, wrong domain |
-| Raw WebGL | ❌ | 3× code, OrbitControls alone = hours |
-| Potree | ❌ | Offline LAS/LAZ files only, not real-time WebSocket |
+- React for panel composition and state ownership
+- Vite for local development and production builds
+- Three.js for 3D lidar, point clouds, sensor replicas, and spatial scenes
+- Canvas 2D for lightweight spectrum, thermal, and map drawing
+- CSS modules for panel-local styling
+- Shared tokens in `src/styles/tokens.css`
+
+Do not revert to the old single-file `index.html` approach. That was a prototype. Narya is now a modular application.
 
 ---
 
-## Design Identity
+## Architecture Rules
 
-### Color Tokens
+### Stream Ownership
+
+Open each WebSocket stream once at the application level.
+
+`App.jsx` owns:
+
+```text
+useThermal()
+useLidar()
+useRF()
+useThreats()
+useFusion()
+```
+
+Panels receive stream objects as props. Do not create duplicate WebSocket connections inside panels.
+
+Correct:
+
+```jsx
+const lidar = useLidar()
+<LidarPanel lidarData={lidar} />
+```
+
+Wrong:
+
+```jsx
+function LidarPanel() {
+  const lidar = useLidar()
+}
+```
+
+### Backend Does The Thinking
+
+The Jetson/backend should perform:
+
+- thermal normalization when possible
+- lidar scan conversion to XYZ
+- lidar decimation/capping
+- clustering and tracking
+- RF FFT and peak detection
+- fusion map generation
+- threat scoring
+- calibration projection math
+
+The frontend should:
+
+- decode stream payloads
+- update typed arrays
+- draw the latest state
+- support inspection and control
+- avoid doing expensive perception work
+
+The frontend is allowed to render. It is not allowed to become the perception pipeline.
+
+---
+
+## Visual Identity
+
+Narya should feel technical, restrained, and immediate.
+
+### Tone
+
+- Calm under pressure
+- High contrast but not loud
+- Scan-first, not decorative
+- Spatial, instrument-like, and exact
+
+### Avoid
+
+- Marketing hero layouts
+- Decorative gradients as backgrounds
+- Floating cards nested inside cards
+- Oversized typography in panels
+- One-note blue/purple monotony
+- UI text that explains obvious controls
+- Anything that makes the app feel like a mockup rather than a tool
+
+---
+
+## Color System
+
+Use existing tokens first.
 
 ```css
 :root {
-  --bg:         #080c10;   /* canvas background */
-  --surface:    #0d1520;   /* HUD panels */
-  --surface-2:  #131e2e;   /* secondary surfaces, hover */
-  --border:     #1e3a5f;   /* panel borders */
-  --accent:     #00d4ff;   /* LIVE indicator, highlights */
-  --accent-dim: #00446688;
-  --warn:       #ff8c42;   /* STALE, warnings */
-  --danger:     #ff2244;   /* OFFLINE, critical */
-  --text-pri:   #e8f4f8;
-  --text-sec:   #6a8fa8;
+  --bg:        #080c10;
+  --surface:   #0d1520;
+  --surface-2: #131e2e;
+  --surface-3: #192438;
+
+  --border:    #1e3a5f;
+  --border-2:  #2a4f7a;
+
+  --accent:    #00d4ff;
+  --accent-lo: rgba(0, 212, 255, 0.08);
+  --accent-md: rgba(0, 212, 255, 0.16);
+
+  --live:    #00d4ff;
+  --warn:    #ff8c42;
+  --danger:  #ff2244;
+  --success: #00e676;
+
+  --thermal-color: #ff6b35;
+  --lidar-color:   #00d4ff;
+  --rf-color:      #c77dff;
 }
 ```
 
-**Rule: Blue→red hues are reserved for the thermal ramp only. Never use them for UI chrome.**
+### Semantic Use
 
-### Thermal Ramp (5-stop)
+- Cyan: live state, lidar, active outlines
+- Orange: thermal identity, warnings, hot objects
+- Purple: RF identity
+- Green: clear/safe/passive success
+- Red: critical threat, failure, destructive state
+- Yellow: selected track, peak marker, medium urgency
 
-```
-0.00 → #0044ff  cold
-0.25 → #00aaff
-0.50 → #00ff88
-0.75 → #ffcc00
-1.00 → #ff2200  hot
-```
+### Thermal Ramp
 
-Implemented in GLSL — NOT in JS per-point. See shader section.
+Thermal data may use a blue-to-red ramp. UI chrome should not copy the full thermal ramp unless representing actual thermal values.
 
-### Typography
+Preferred thermal ramp:
 
-- Font: `JetBrains Mono` (Google Fonts CDN)
-- Sizes: 11px labels · 13px HUD values · 15px panel titles · 22px large stats
-- Weights: 400 body · 600 values · 700 headers
-
----
-
-## File Structure
-
-```
-index.html   ← entire app, self-contained
-```
-
-All CSS in `<style>`. All JS in `<script type="module">`. CDN imports only via importmap.
-
-Additional CDN:
-```html
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+```text
+cold    #0044ff
+cool    #00aaff
+middle  #00ff88
+warm    #ffcc00
+hot     #ff2200
 ```
 
 ---
 
-## Layout
+## Typography
 
+Use `JetBrains Mono` for the current Narya interface unless the design system is intentionally changed.
+
+Panel text should be compact:
+
+```text
+9px  - tiny state, axis labels
+10px - buttons, metadata, legends
+11px - panel titles
+13px - body/default
+18px - exceptional emphasis only
 ```
+
+Rules:
+
+- Letter spacing may be positive for labels, never negative.
+- Do not scale fonts with viewport width.
+- Long labels must truncate or use shorter labels.
+- Panel headers must never overlap controls.
+
+---
+
+## Layout Model
+
+Narya uses a fixed operator shell:
+
+```text
 ┌──────────────────────────────────────────────────────────┐
-│  TITLE BAR 40px  —  ◈ NARYA · STREAM NAME · ● LIVE      │
-├──────────────────────────────────────────────────────────┤
-│                                                          │
-│              THREE.JS CANVAS (full viewport)             │
-│                                                          │
-│  [axes 120×120 inset, bottom-left corner of canvas]      │
-│                                                          │
-│  ┌───────────────┐              ┌─────────────────────┐  │
-│  │  STATS HUD    │              │  THERMAL LEGEND     │  │
-│  └───────────────┘              └─────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
+│ TitleBar: system state, alerts, settings, calibration    │
+├──────────────────┬──────────────────┬──────────────────┤
+│ Thermal          │ Lidar 3D          │ Fusion Map       │
+│                  │                  │                  │
+├──────────────────┴───────┬──────────┴──────────────────┤
+│ RF Spectrum              │ Threat Fusion                │
+└──────────────────────────┴──────────────────────────────┘
 ```
 
-- Title bar: `position: fixed; top: 0; width: 100%; height: 40px; z-index: 100`
-- Canvas: `position: fixed; top: 40px; left: 0; right: 0; bottom: 0`
-- Stats HUD: `position: fixed; bottom: 20px; left: 20px; pointer-events: none`
-- Thermal legend: `position: fixed; bottom: 20px; right: 20px; pointer-events: auto`
+Current top row:
+
+```text
+ThermalPanel | LidarPanel | FusionMapPanel
+```
+
+Current bottom row:
+
+```text
+RFPanel | ThreatPanel
+```
+
+### Panel Rules
+
+- Use `PanelShell` for all primary panels.
+- Header height must remain compact.
+- Header controls must fit in their lane.
+- Use short button labels plus `title` tooltips.
+- Body content should fill available space.
+- No panel should require page scroll.
 
 ---
 
-## GLSL Vertex Shader (thermal coloring on GPU)
+## Panel Responsibilities
 
-This replaces ALL per-point JS color computation. Zero CPU cost.
+### Thermal Panel
 
-```glsl
-// Vertex shader — stored as JS template literal VERT_SHADER
-uniform float uTmin;
-uniform float uTmax;
-attribute float temp;
-varying vec3 vColor;
+Purpose: show live heat context and basic radiometric readout.
 
-vec3 thermalRamp(float t) {
-  vec3 c0 = vec3(0.000, 0.267, 1.000);  // #0044ff  cold
-  vec3 c1 = vec3(0.000, 0.667, 1.000);  // #00aaff
-  vec3 c2 = vec3(0.000, 1.000, 0.533);  // #00ff88
-  vec3 c3 = vec3(1.000, 0.800, 0.000);  // #ffcc00
-  vec3 c4 = vec3(1.000, 0.133, 0.000);  // #ff2200  hot
+Inputs:
 
-  float u = clamp((t - uTmin) / (uTmax - uTmin + 0.001), 0.0, 1.0);
-
-  if (u < 0.25) return mix(c0, c1, u / 0.25);
-  if (u < 0.50) return mix(c1, c2, (u - 0.25) / 0.25);
-  if (u < 0.75) return mix(c2, c3, (u - 0.50) / 0.25);
-               return mix(c3, c4, (u - 0.75) / 0.25);
-}
-
-void main() {
-  vColor = thermalRamp(temp);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = 2.5;
-}
+```text
+/thermal
 ```
 
-```glsl
-// Fragment shader — round points (discard corners)
-varying vec3 vColor;
-void main() {
-  float d = length(gl_PointCoord - vec2(0.5));
-  if (d > 0.5) discard;
-  gl_FragColor = vec4(vColor, 0.92);
-}
+Expected behavior:
+
+- Render latest thermal frame.
+- Show min/max thermal scale.
+- Support palette selection.
+- Support FFC command.
+- Support snapshot.
+- Crosshair readout should be quick and non-blocking.
+
+Performance:
+
+- Render only on new frame or palette change.
+- Do not recolor at display refresh rate.
+- Prefer backend-colored frames if CPU becomes an issue.
+
+Future ideal:
+
+- Backend sends RGB/RGBA or compressed image frame.
+- Frontend only blits pixels.
+
+### Lidar Panel
+
+Purpose: show an embedded 3D replica of the lidar sensor and its live point cloud.
+
+Inputs:
+
+```text
+/lidar
 ```
 
-Use `THREE.ShaderMaterial`:
-```js
-const material = new THREE.ShaderMaterial({
-  uniforms: {
-    uTmin: { value: 0.0 },
-    uTmax: { value: 100.0 },
-  },
-  vertexShader: VERT_SHADER,
-  fragmentShader: FRAG_SHADER,
-})
+Current design:
+
+- Three.js scene inside the dashboard panel.
+- Small lidar body at origin.
+- Ground grid.
+- Range rings.
+- Live point cloud.
+- Color modes:
+  - intensity
+  - height
+- Pop-out full 3D view available.
+
+Rules:
+
+- Do not use 2D bird's-eye as the primary lidar panel.
+- The main lidar panel should feel like a physical sensor view.
+- Points should be GPU-rendered through `BufferGeometry`.
+- Mutate preallocated buffers where possible.
+- Keep dashboard 3D lighter than the full pop-out view.
+
+### Fusion Map Panel
+
+Purpose: render the fused understanding of the area.
+
+Inputs:
+
+```text
+/fusion
+/lidar fallback
+/threats fallback
 ```
 
-Update uniforms per frame (not per point):
-```js
-material.uniforms.uTmin.value = envelope.t_min
-material.uniforms.uTmax.value = envelope.t_max
+It may show:
+
+- occupancy grid
+- fused tracks
+- zones
+- sensor pose
+- lidar fallback points
+- threat fallback tracks
+
+Rules:
+
+- Fusion data wins over raw fallback data.
+- Occupancy and zones should read as world structure.
+- Tracks should be inspectable.
+- The map should not pretend certainty; use visual confidence.
+
+### RF Panel
+
+Purpose: show spectrum state and RF emitters.
+
+Inputs:
+
+```text
+/rf
 ```
+
+Expected behavior:
+
+- Spectrum line/fill.
+- Noise floor.
+- Peak labels.
+- Optional waterfall.
+- Band selection commands.
+
+Performance:
+
+- Draw only on new FFT frame.
+- FFT computation belongs on backend.
+- Peak detection belongs on backend.
+
+### Threat Panel
+
+Purpose: turn fused detections into an operator queue.
+
+Inputs:
+
+```text
+/threats
+```
+
+Expected behavior:
+
+- Sort by confidence, range, or speed.
+- Show modalities contributing to the threat.
+- Use compact, card-based repeated items.
+- Critical threats should be obvious without making the entire app frantic.
 
 ---
 
-## Three.js Scene Setup
+## Data Contracts
 
-```js
-import * as THREE from 'three'
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+### `/thermal`
 
-const MAX_POINTS = 8192
-
-// Renderer
-const renderer = new THREE.WebGLRenderer({ antialias: false })
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-renderer.setSize(window.innerWidth, window.innerHeight - 40)
-document.getElementById('canvas-container').appendChild(renderer.domElement)
-
-// Scene
-const scene = new THREE.Scene()
-scene.background = new THREE.Color(0x080c10)
-
-// Camera
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / (window.innerHeight - 40), 0.1, 500)
-camera.position.set(0, 8, 20)
-
-// Controls
-const controls = new OrbitControls(camera, renderer.domElement)
-controls.enableDamping = true
-controls.dampingFactor = 0.05
-
-// Ground grid
-const grid = new THREE.GridHelper(40, 40, 0x1e3a5f, 0x0d1a2e)
-scene.add(grid)
-
-// Pre-allocated buffers — NEVER allocate inside message handler
-const positions = new Float32Array(MAX_POINTS * 3)
-const temps     = new Float32Array(MAX_POINTS)
-
-const geometry = new THREE.BufferGeometry()
-geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-geometry.setAttribute('temp',     new THREE.BufferAttribute(temps, 1))
-geometry.setDrawRange(0, 0)
-
-const points = new THREE.Points(geometry, material)
-scene.add(points)
-
-// Axes inset (separate scene, renders in 120×120 corner)
-const axesScene  = new THREE.Scene()
-const axesCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 10)
-axesCamera.position.set(2, 2, 2)
-axesScene.add(new THREE.AxesHelper(1))
-
-// Render loop
-function animate() {
-  requestAnimationFrame(animate)
-  controls.update()
-
-  // Main scene
-  renderer.setViewport(0, 0, window.innerWidth, window.innerHeight - 40)
-  renderer.setScissorTest(false)
-  renderer.render(scene, camera)
-
-  // Axes inset — 120×120 bottom-left
-  const S = 120
-  renderer.setViewport(12, 12, S, S)
-  renderer.setScissor(12, 12, S, S)
-  renderer.setScissorTest(true)
-  axesCamera.quaternion.copy(camera.quaternion)
-  renderer.render(axesScene, axesCamera)
-  renderer.setScissorTest(false)
-}
-animate()
-```
-
----
-
-## Binary Parse — Zero Allocation
-
-**NEVER use `Uint8Array.from(atob(...), c => c.charCodeAt(0))` — the callback allocates.**
-
-Pre-allocate the raw decode buffer alongside the point buffers:
-
-```js
-const rawBuffer = new Uint8Array(MAX_POINTS * 16)  // 131,072 bytes, allocated once
-```
-
-```js
-function handleFrame(msg) {
-  const envelope = JSON.parse(msg.data)
-  if (envelope.type !== 'frame') return
-
-  const binaryStr = atob(envelope.data)
-  const len = Math.min(binaryStr.length, rawBuffer.length)
-
-  // Manual loop — fastest charCode path in V8, no callback allocation
-  for (let i = 0; i < len; i++) rawBuffer[i] = binaryStr.charCodeAt(i)
-
-  const view = new DataView(rawBuffer.buffer, 0, len)
-  const n = Math.min(envelope.n, MAX_POINTS)
-
-  for (let i = 0; i < n; i++) {
-    const b = i * 16
-    positions[i * 3]     = view.getFloat32(b,      true)  // x
-    positions[i * 3 + 1] = view.getFloat32(b + 4,  true)  // y
-    positions[i * 3 + 2] = view.getFloat32(b + 8,  true)  // z
-    temps[i]             = view.getFloat32(b + 12, true)  // temp °C
-  }
-
-  // GPU upload
-  geometry.attributes.position.needsUpdate = true
-  geometry.attributes.temp.needsUpdate = true
-  geometry.setDrawRange(0, n)
-
-  // Update uniforms (not per-point — just twice per frame)
-  material.uniforms.uTmin.value = envelope.t_min
-  material.uniforms.uTmax.value = envelope.t_max
-
-  // Update HUD
-  updateStats(envelope)
-  lastFrameTs = Date.now()
-  setState('LIVE')
-}
-```
-
----
-
-## WebSocket + Auto-Reconnect
-
-```js
-let retryDelay = 1000
-let ws = null
-
-function connect(url) {
-  setState('CONNECTING')
-  ws = new WebSocket(url)
-  ws.onopen  = () => { retryDelay = 1000 }
-  ws.onclose = () => {
-    setState('OFFLINE')
-    setTimeout(() => connect(url), retryDelay)
-    retryDelay = Math.min(retryDelay * 2, 16000)
-  }
-  ws.onerror = () => setState('OFFLINE')
-  ws.onmessage = handleFrame
-}
-
-// Auto-start sim if no connection after 3s
-setTimeout(() => {
-  if (state !== 'LIVE') startSimMode()
-}, 3000)
-```
-
----
-
-## Demo / Simulation Mode
-
-Activated by `D` key or auto after 3s with no Jetson connection.
-Shows `⬡ SIM` amber pill. Full UI is functional.
-
-```js
-let simInterval = null
-
-function startSimMode() {
-  setState('SIM')
-  const N = 4096
-  let t = 0
-  simInterval = setInterval(() => {
-    t += 0.05
-    for (let i = 0; i < N; i++) {
-      const angle = (i / N) * Math.PI * 2 + t
-      const r = 3 + Math.sin(i * 0.1 + t) * 2
-      positions[i * 3]     = Math.cos(angle) * r
-      positions[i * 3 + 1] = Math.sin(i * 0.05 + t) * 1.5 + (Math.random() - 0.5) * 0.05
-      positions[i * 3 + 2] = Math.sin(angle) * r
-      temps[i] = 20 + 40 * (0.5 + 0.5 * Math.sin(i * 0.03 + t * 2))
-    }
-    geometry.attributes.position.needsUpdate = true
-    geometry.attributes.temp.needsUpdate = true
-    geometry.setDrawRange(0, N)
-    material.uniforms.uTmin.value = 20
-    material.uniforms.uTmax.value = 60
-    updateStats({ n: N, t_min: 20, t_max: 60, seq: simSeq++, ts: Date.now() / 1000 })
-  }, 100)
-}
-
-function stopSimMode() {
-  clearInterval(simInterval)
-  simInterval = null
-}
-```
-
----
-
-## Connection State Machine
-
-| State | Pill | Color | Trigger |
-|---|---|---|---|
-| `CONNECTING` | `◌ CONNECTING` | amber pulse | Socket opening |
-| `LIVE` | `● LIVE` | `--accent` pulse | Frame received |
-| `STALE` | `⚠ STALE` | `--warn` | No frame > 500ms |
-| `OFFLINE` | `✕ OFFLINE` | `--danger` | Socket closed/error |
-| `SIM` | `⬡ SIM` | amber steady | Demo mode |
-
-```js
-let state = 'CONNECTING'
-let lastFrameTs = 0
-
-// Stale detection
-setInterval(() => {
-  if (state === 'LIVE' && Date.now() - lastFrameTs > 500) setState('STALE')
-}, 100)
-
-function setState(s) {
-  state = s
-  // update pill DOM
-}
-```
-
----
-
-## Stats HUD (bottom-left)
-
-```
-STREAM
-─────────────────────────────
-Points          8 192
-Frame rate      10.0 fps
-Latency         14 ms
-Frames rx       1 247
-─────────────────────────────
-T min           18.4 °C      ← colored #0044ff
-T max           67.2 °C      ← colored #ff2200
-T mean          31.6 °C      ← colored mid-ramp
-T spread        48.8 °C
-```
-
-- `pointer-events: none`
-- Temperature values set `style.color` via JS `thermalHex(t, tMin, tMax)` — interpolated 5-stop ramp returning CSS rgb()
-
----
-
-## Thermal Legend (bottom-right)
-
-```
-TEMPERATURE  °C
-█████████████████████████████
-COLD 18.4 °C          67.2 °C HOT
-
-[ AUTO RANGE ]   [ LOCK ]
-```
-
-- Gradient bar: `linear-gradient(to right, #0044ff, #00aaff, #00ff88, #ffcc00, #ff2200)`
-- Min/max labels update every frame
-- LOCK: sets `frozen = true` — stops buffer writes, render loop continues
-- `pointer-events: auto`
-
----
-
-## Settings Panel (S key)
-
-```
-SETTINGS                                    ✕
-──────────────────────────────────────────────
-WebSocket URL    ws://[ 192.168.1.42 ]:9090
-Show grid        [✓]
-Show axes        [✓]
-Demo mode        [ ]
-──────────────────────────────────────────────
-                              [ APPLY ]
-```
-
-Safe localStorage wrapper (survives sandboxed iframes + private mode):
-```js
-const store = {
-  get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } },
-  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
-}
-```
-
----
-
-## Keyboard Shortcuts
-
-| Key | Action |
-|---|---|
-| `Space` | Lock / unlock frame |
-| `R` | Reset camera to default |
-| `N` | Toggle auto-range normalize |
-| `F` | Fullscreen |
-| `S` | Open / close settings |
-| `D` | Toggle demo / sim mode |
-| `?` | Keybindings overlay |
-| `Esc` | Close overlays |
-
----
-
-## No-Signal State
-
-When `state === 'OFFLINE'` and no frames ever received:
-
-```
-        ◈
-  AWAITING STREAM
-  ws://192.168.1.42:9090
-  Reconnecting in 4s...
-```
-
-Centered over canvas. Grid still renders beneath it.
-
----
-
-## Performance Budget
-
-| Step | Budget | Method |
-|---|---|---|
-| atob + parse loop | < 2ms | Pre-allocated Uint8Array, manual charCode loop |
-| Thermal coloring | 0ms | GLSL vertex shader on GPU |
-| GPU buffer upload | < 2ms | `needsUpdate = true` pattern |
-| Three.js render | < 6ms | antialias: false, pixelRatio capped at 2 |
-| **Total @ 10fps** | **< 10ms** | 90ms headroom per frame |
-
-### Hard rules
-- Never `new Float32Array()` inside `onmessage`
-- Pre-allocate `rawBuffer` at init — never inside the message handler
-- Never recreate `BufferGeometry` — mutate attributes in place
-- Always `geometry.setDrawRange(0, n)` for variable point counts
-- Update uniforms once per frame, not per point
-
----
-
-## Data Contract
-
-### Frame envelope (server → client, 10 fps)
+JSON WebSocket frame:
 
 ```json
 {
   "type": "frame",
-  "seq": 1247,
-  "ts": 1714500000.123,
-  "n": 8192,
-  "t_min": 18.4,
-  "t_max": 67.2,
-  "data": "<base64-encoded binary blob>"
+  "w": 640,
+  "h": 512,
+  "data": "base64_8bit_pixels",
+  "t_min": 18.2,
+  "t_max": 42.7,
+  "radiometric": true,
+  "seq": 123,
+  "ts": 1714700000.123
 }
 ```
 
-### Binary blob layout (per point, 16 bytes, little-endian float32)
+### `/lidar`
 
-| Offset | Field | Type | Unit |
-|---|---|---|---|
-| 0 | x | float32 | metres |
-| 4 | y | float32 | metres |
-| 8 | z | float32 | metres |
-| 12 | temp | float32 | °C |
+JSON envelope with base64 binary payload:
+
+```json
+{
+  "type": "frame",
+  "n": 60000,
+  "data": "base64_float32_xyz_intensity",
+  "clusters": [],
+  "seq": 123,
+  "ts": 1714700000.123
+}
+```
+
+Binary point layout, little-endian:
+
+```text
+offset 0   float32 x meters
+offset 4   float32 y meters
+offset 8   float32 z meters
+offset 12  float32 intensity normalized 0..1
+```
+
+### `/fusion`
+
+```json
+{
+  "type": "frame",
+  "map": {
+    "width": 120,
+    "height": 120,
+    "resolution": 0.5,
+    "origin": { "x": -30, "z": -30 },
+    "cells": [0, 0.2, 0.8]
+  },
+  "tracks": [
+    {
+      "id": 1,
+      "position": { "x": 8.2, "z": 14.5 },
+      "velocity": { "x": 0.1, "z": -0.3 },
+      "confidence": 0.88,
+      "speed": 0.32
+    }
+  ],
+  "zones": [],
+  "pose": { "x": 0, "z": 0 },
+  "seq": 123,
+  "ts": 1714700000.123
+}
+```
+
+### `/rf`
+
+```json
+{
+  "type": "frame",
+  "n_fft": 1024,
+  "data": "base64_float32_fft_bins",
+  "center_freq": 433920000,
+  "sample_rate": 2400000,
+  "noise_floor": -85,
+  "peaks": [
+    { "freq": 433920000, "power": -42.1, "label": "ISM" }
+  ],
+  "ts": 1714700000.123
+}
+```
+
+### `/threats`
+
+```json
+{
+  "type": "frame",
+  "threats": [
+    {
+      "id": 1,
+      "confidence": 0.91,
+      "range": 18.4,
+      "bearing": 32,
+      "speed": 1.2,
+      "age_frames": 12,
+      "modalities": ["lidar", "thermal"]
+    }
+  ],
+  "ts": 1714700000.123
+}
+```
 
 ---
 
-## Changes from v1.0
+## Performance Rules
 
-| # | Change | Why |
-|---|---|---|
-| 1 | importmap instead of bare CDN script tags | Cleaner, no relative path issues, native Chrome support |
-| 2 | GLSL vertex shader for thermal coloring | Moves 81,920 color computations/sec from CPU to GPU |
-| 3 | Fragment shader round point discard | Points render as circles, not squares — much more readable |
-| 4 | Pre-allocated rawBuffer + manual charCode loop | Fastest V8 path, zero allocation in hot path |
-| 5 | Demo / sim mode | Full UI without Jetson — essential for development/demo |
-| 6 | SIM state added to state machine | Operator always knows what they're looking at |
-| 7 | localStorage safe wrapper | Survives sandboxed iframes and private browsing |
+Narya should prefer backend computation and frontend rendering.
+
+### Hard Rules
+
+- Do not run expensive perception logic in React render paths.
+- Do not create WebSocket connections per component.
+- Do not allocate large typed arrays inside animation loops.
+- Do not redraw canvas panels at 60 FPS unless interaction requires it.
+- Do not colorize every point on the CPU when a shader can do it.
+- Do not send unlimited lidar points to the browser.
+- Cap point cloud size in backend and frontend.
+
+### Expected Frontend CPU Work
+
+Allowed:
+
+- WebSocket JSON parse
+- base64 decode for current protocol
+- typed-array copy into preallocated buffers
+- canvas draw of current frame
+- Three.js render of visible 3D scenes
+
+Not allowed:
+
+- DBSCAN
+- tracking
+- thermal-to-lidar projection
+- FFT
+- threat scoring
+- map accumulation
+- mesh reconstruction
+
+### Rendering Strategy
+
+Thermal:
+
+- draw on `meta.seq`
+- avoid continuous RAF
+
+Lidar dashboard:
+
+- update geometry on `meta.seq`
+- render scene after data update or user orbit
+
+Fusion:
+
+- draw on fusion frame or fallback lidar/threat update
+
+RF:
+
+- draw on RF timestamp update
+
+3D pop-out:
+
+- may use RAF while open because orbit controls and full scene interaction need it
 
 ---
 
-## Deliverable
+## Three.js Guidance
 
-Single `index.html`. Open in Chrome. No install. No build.
+Use Three.js for all 3D elements.
 
-- **With Jetson:** Point to `ws://<jetson-ip>:9090` → world appears in < 2s
-- **Without Jetson:** Press `D` or wait 3s → sim mode → full demo ready
+For point clouds:
+
+```js
+const positions = new Float32Array(MAX_POINTS * 3)
+const intensities = new Float32Array(MAX_POINTS)
+
+const geometry = new THREE.BufferGeometry()
+geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+geometry.setAttribute('intensity', new THREE.BufferAttribute(intensities, 1))
+geometry.setDrawRange(0, 0)
+```
+
+Update existing buffers:
+
+```js
+positions.set(frame.positions.subarray(0, n * 3))
+intensities.set(frame.intensities.subarray(0, n))
+geometry.attributes.position.needsUpdate = true
+geometry.attributes.intensity.needsUpdate = true
+geometry.setDrawRange(0, n)
+```
+
+Never recreate geometry per frame.
+
+### Shader Color
+
+Use shaders for point coloring where possible.
+
+Intensity mode:
+
+```glsl
+vColor = ramp(intensity);
+```
+
+Height mode:
+
+```glsl
+vColor = ramp((position.y + 2.0) / 4.0);
+```
+
+Thermal mode, future:
+
+```glsl
+vColor = thermalRamp(temp);
+```
+
+---
+
+## Interaction Design
+
+Controls should be short and physical.
+
+Use:
+
+- `INT` for intensity
+- `HT` for height
+- `FUSE` for fusion layer
+- `OCC` for occupancy
+- `TRK` for tracks
+- `FOL` for follow
+- `POP` for pop-out
+
+Add `title` attributes for clarity.
+
+Do not put long explanatory text in panel headers. The operator learns the instrument; the UI should not chatter.
+
+---
+
+## Connection States
+
+Every panel should show a connection state through `PanelShell`.
+
+States:
+
+```text
+connecting
+live
+stale
+offline
+```
+
+Meaning:
+
+- `connecting`: socket opening or reconnecting
+- `live`: receiving frames
+- `stale`: socket exists but frames stopped
+- `offline`: socket closed or failed
+
+Future improvement: hooks should mark stale based on last frame timestamp.
+
+---
+
+## Backend Contract
+
+The backend runs on Jetson and binds to:
+
+```bash
+python3 server.py --host 0.0.0.0 --port 9090
+```
+
+Thermal:
+
+```bash
+--device 0 --fps 2
+```
+
+Lidar:
+
+```bash
+--lidar-host 169.254.62.165 --lidar-fps 3 --lidar-max-points 60000
+```
+
+The frontend default connects to:
+
+```text
+ws://<jetson-ip>:9090
+```
+
+The UI settings panel must let the operator set host and port.
+
+---
+
+## Expert Review Checklist
+
+Before shipping a Narya frontend change, verify:
+
+- Build passes with `npm run build`.
+- No panel header overlaps at narrow widths.
+- No duplicate WebSocket streams are opened.
+- No unnecessary `requestAnimationFrame` loops were added.
+- The frontend remains useful when one sensor is offline.
+- Connection state is visible.
+- Main information is visible without scrolling.
+- 3D scenes are not blank.
+- Lidar point count is capped.
+- Backend owns sensor processing.
+- Controls are compact and understandable.
+
+---
+
+## Design North Star
+
+Narya should feel like the operator is holding a live model of the perimeter.
+
+The best version of Narya is not flashy. It is lucid.
+
+It lets someone glance at the screen and know:
+
+```text
+the system is alive
+the map is forming
+the sensor is oriented
+the threat queue is credible
+the next action is obvious
+```
+
+Build toward that.

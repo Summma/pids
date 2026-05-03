@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import TitleBar        from '@/components/TitleBar'
 import ThermalPanel    from '@/panels/ThermalPanel'
-import LidarPanel      from '@/panels/LidarPanel'
+import WorldMapPanel   from '@/panels/WorldMapPanel'
 import RFPanel         from '@/panels/RFPanel'
 import ThreatPanel     from '@/panels/ThreatPanel'
 import FusionMapPanel  from '@/panels/FusionMapPanel'
@@ -41,7 +41,12 @@ export default function App() {
       <main className={styles.main}>
         <div className={styles.sensorRow}>
           <ThermalPanel thermalData={thermal} />
-          <LidarPanel lidarData={lidar} onPopOut3D={() => setShow3D(true)} />
+          <WorldMapPanel
+            lidarData={lidar}
+            fusionData={fusion}
+            thermalData={thermal}
+            onPopOut3D={() => setShow3D(true)}
+          />
           <FusionMapPanel fusionData={fusion} lidarData={lidar} threatData={threats} />
         </div>
 
