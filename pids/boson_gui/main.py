@@ -68,6 +68,7 @@ class ThermalPanel(QWidget):
         self.fps = 0.0
 
         self.viewer = Viewer2D("Thermal — Boson 640")
+        self.viewer.max_fps = 8.0
         self.viewer.set_overlay_callback(self._overlay)
 
         # Connection
@@ -239,8 +240,13 @@ class LidarPanel(QWidget):
         self.frame_count = 0
         self.fps_t0 = time.monotonic()
         self.fps = 0.0
+        self._last_2d_draw_t = 0.0
+        self._last_cloud_update_t = 0.0
+        self._2d_draw_interval = 1.0 / 6.0
+        self._cloud_update_interval = 1.0 / 3.0
 
         self.viewer = Viewer2D("Lidar — Ouster")
+        self.viewer.max_fps = 6.0
         self.viewer.palette_combo.setCurrentText("Turbo")
 
         # Connection
@@ -340,8 +346,18 @@ class LidarPanel(QWidget):
     def _on_frame(self, frame: LidarFrame) -> None:
         self.last_frame = frame
         self.frame_count += 1
-        self._redraw()
-        if self.cloud_window is not None and self.cloud_window.isVisible():
+
+        now = time.monotonic()
+        if now - self._last_2d_draw_t >= self._2d_draw_interval:
+            self._last_2d_draw_t = now
+            self._redraw()
+
+        if (
+            self.cloud_window is not None
+            and self.cloud_window.isVisible()
+            and now - self._last_cloud_update_t >= self._cloud_update_interval
+        ):
+            self._last_cloud_update_t = now
             self.cloud_window.update_cloud(frame)
 
     def _redraw(self) -> None:

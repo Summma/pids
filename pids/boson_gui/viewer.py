@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -86,6 +87,8 @@ class Viewer2D(QWidget):
         self.last_frame: Optional[np.ndarray] = None
         self.last_display_bgr: Optional[np.ndarray] = None  # last rendered BGR frame
         self.overlay_cb: Optional[Callable[[np.ndarray, np.ndarray], None]] = None
+        self.max_fps = 15.0
+        self._last_show_t = 0.0
 
         self.video = VideoLabel()
 
@@ -122,6 +125,12 @@ class Viewer2D(QWidget):
 
     def show_frame(self, frame: np.ndarray) -> None:
         self.last_frame = frame
+        now = time.monotonic()
+        min_interval = 1.0 / max(self.max_fps, 1.0)
+        if now - self._last_show_t < min_interval:
+            return
+        self._last_show_t = now
+
         display = self._render(frame)
         if self.overlay_cb is not None:
             self.overlay_cb(display, frame)
@@ -155,7 +164,7 @@ class Viewer2D(QWidget):
             self.video.width(),
             self.video.height(),
             Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
+            Qt.FastTransformation,
         )
         self.video.setPixmap(pix)
 
