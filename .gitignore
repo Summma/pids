@@ -77,3 +77,4 @@ ml/outputs/
 *~
 .DS_Store
 Thumbs.db
+.gstack/

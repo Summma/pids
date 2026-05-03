@@ -39,7 +39,7 @@
   --rf-color:      #7557b8;
 
   /* Font */
-  --font: "Computer Modern Serif", "CMU Serif", Georgia, "Times New Roman", serif;
+  --font: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-display: var(--font);
 
   /* Sizing */

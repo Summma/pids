@@ -5,7 +5,7 @@ import styles from './FusionMapPanel.module.css'
 const WORLD_M = 60
 const GRID_STEP = 10
 const MAX_DRAW_PTS = 9000
-const CANVAS_FONT_10 = '10px "Computer Modern Serif", serif'
+const CANVAS_FONT_10 = '10px "Space Grotesk", system-ui, sans-serif'
 const LAYERS = [
   { key: 'fusion', label: 'Fusion' },
   { key: 'occupancy', label: 'Occupancy' },

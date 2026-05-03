@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react'
 import styles from './RFPanel.module.css'
 
-const CANVAS_FONT_9 = '9px "Computer Modern Serif", serif'
+const CANVAS_FONT_9 = '9px "Space Grotesk", system-ui, sans-serif'
 
 export default function Spectrum({ fftRef, meta, peaks }) {
   const canvasRef = useRef(null)
