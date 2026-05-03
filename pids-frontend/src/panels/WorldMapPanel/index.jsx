@@ -82,13 +82,15 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
     connState: lidarState,
     detections = [],
   } = lidarData
-  const { frameRef: thermalFrameRef, meta: thermalMeta } = thermalData
+  const { frameRef: thermalFrameRef, meta: thermalMeta, error: thermalError, connState: thermalState } = thermalData
   const mountRef = useRef(null)
   const sceneRef = useRef(null)
   const [mode, setMode] = useState(0)
 
   const boxes = useMemo(() => normalizeDetections(detections), [detections])
-  const subtitle = `${lidarMeta.n.toLocaleString()} pts · ${boxes.length} ${boxes.length === 1 ? 'box' : 'boxes'}`
+  const thermalConfirmed = boxes.filter(box => box.thermalScore >= 0.62 && box.thermalCoverage >= 0.12).length
+  const thermalStatus = thermalError || (thermalState === 'live' ? `${thermalMeta.tMin.toFixed(1)}-${thermalMeta.tMax.toFixed(1)} C` : 'thermal offline')
+  const subtitle = `${lidarMeta.n.toLocaleString()} pts · ${boxes.length} ${boxes.length === 1 ? 'box' : 'boxes'} · ${thermalConfirmed} heat-supported`
 
   useEffect(() => {
     const el = mountRef.current
@@ -289,7 +291,8 @@ const WorldMapPanel = forwardRef(function WorldMapPanel({ lidarData, thermalData
         <div ref={mountRef} className={styles.scene} />
         <div className={styles.readout}>
           <span className={styles.live}>{lidarMeta.n.toLocaleString()} pts</span>
-          <span className={styles.heat}>{thermalMeta.tMin.toFixed(1)}-{thermalMeta.tMax.toFixed(1)} C</span>
+          <span className={thermalError ? styles.warn : styles.heat}>{thermalStatus}</span>
+          <span className={styles.fusion}>{thermalConfirmed} thermal supports</span>
         </div>
       </div>
     </PanelShell>
@@ -589,7 +592,11 @@ function normalizeDetections(items) {
       size,
       yaw: Number(item.yaw ?? item.heading ?? 0) || 0,
       label: String(item.class_name ?? item.label ?? item.kind ?? 'object').replaceAll('_', ' '),
-      score: clamp01(item.score ?? item.confidence ?? item.model_score ?? 0),
+      score: clamp01(item.fusion_score ?? item.score ?? item.confidence ?? item.model_score ?? 0),
+      modelScore: clamp01(item.model_score ?? item.score ?? 0),
+      thermalScore: clamp01(item.thermal_score ?? 0),
+      thermalCoverage: clamp01(item.thermal_coverage ?? 0),
+      fusionNote: String(item.fusion_note ?? ''),
     }
   }).filter(item => item.size.every(Number.isFinite) && item.center.every(Number.isFinite))
 }

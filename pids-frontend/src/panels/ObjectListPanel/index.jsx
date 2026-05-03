@@ -20,10 +20,24 @@ export default function ObjectListPanel({ lidarData }) {
               <div className={styles.row} key={`${object.source}-${object.id}`}>
                 <div className={styles.main}>
                   <span className={styles.label}>{object.label}</span>
-                  <span className={styles.source}>{object.source}</span>
+                  <span className={styles.source}>
+                    {object.source}
+                    {object.fusionNote ? ` · ${object.fusionNote.replaceAll('_', ' ')}` : ''}
+                  </span>
+                  <div className={styles.evidence}>
+                    {object.thermalUnavailable ? (
+                      <span>Thermal unavailable</span>
+                    ) : (
+                      <>
+                        <span>Thermal {percent(object.thermalScore)}</span>
+                        <span>Cov {percent(object.thermalCoverage)}</span>
+                      </>
+                    )}
+                    {object.pointpillarsSupport > 0 && <span>PP {percent(object.pointpillarsSupport)}</span>}
+                  </div>
                 </div>
                 <div className={styles.metrics}>
-                  <span>{Math.round(object.score * 100)}%</span>
+                  <span>{percent(object.fusionScore)}</span>
                   <span>{object.range.toFixed(1)} m</span>
                 </div>
               </div>
@@ -54,6 +68,13 @@ function normalizeDetections(items) {
       size,
       label,
       score: clamp01(item.score ?? item.confidence ?? item.model_score ?? 0),
+      fusionScore: clamp01(item.fusion_score ?? item.score ?? item.confidence ?? item.model_score ?? 0),
+      thermalScore: clamp01(item.thermal_score ?? 0),
+      thermalCoverage: clamp01(item.thermal_coverage ?? 0),
+      thermalHotFraction: clamp01(item.thermal_hot_fraction ?? 0),
+      pointpillarsSupport: clamp01(item.pointpillars_support ?? 0),
+      fusionNote: String(item.fusion_note ?? ''),
+      thermalUnavailable: String(item.fusion_note ?? '').includes('thermal_unavailable'),
       range: Math.hypot(center[0], center[1], center[2]),
     }
   }).filter(item => item.size.every(Number.isFinite) && item.center.every(Number.isFinite))
@@ -76,4 +97,8 @@ function bboxSize(minValue, maxValue) {
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, Number(v) || 0))
+}
+
+function percent(v) {
+  return `${Math.round(clamp01(v) * 100)}%`
 }

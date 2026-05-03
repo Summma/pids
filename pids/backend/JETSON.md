@@ -40,7 +40,17 @@ journalctl --user -u narya-backend -f
 
 ## Dashboard Connection
 
-Open the dashboard, click `Settings`, set:
+If the frontend build has been deployed, open:
+
+```text
+http://<jetson-ip>:9090
+```
+
+Because the page is served from the Jetson backend, the default websocket host
+will also be the Jetson.
+
+If you run the Vite dev server on the laptop instead, open the dashboard,
+click `Settings`, set:
 
 ```text
 Jetson Host: <jetson-ip-or-hostname>
@@ -59,6 +69,23 @@ Expected routes:
 - `/camera`: real camera JPEG frames.
 - `/thermal`: optional Boson thermal frames if `PIDS_THERMAL_DEVICE` is set.
 - `/gemini/chat`: multimodal scene analyst endpoint.
+
+Optional PointPillars support:
+
+```bash
+python3 jetson_detector/pointpillars_server.py --host 127.0.0.1 --port 5555
+```
+
+Then set these in `pids/backend/jetson.env`:
+
+```bash
+PIDS_DETECTION_MODE=auto
+PIDS_POINTPILLARS_ENDPOINT=tcp://127.0.0.1:5555
+```
+
+In `auto` mode, the web backend keeps `indoor_human` as the seated/occupied
+chair detector and uses PointPillars as a secondary support/proposal signal,
+not as the final seated-person decision.
 
 ## Notes
 

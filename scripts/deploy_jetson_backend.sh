@@ -9,10 +9,10 @@ rsync -az --delete \
   --exclude ".git" \
   --exclude ".venv*" \
   --exclude "node_modules" \
-  --exclude "backend/static/assets" \
+  --exclude "pids/backend/jetson.env" \
   "$ROOT_DIR/" "$TARGET:$REMOTE_DIR/"
 
-ssh "$TARGET" "cd $REMOTE_DIR && pids/backend/setup_jetson_backend.sh"
+ssh "$TARGET" "cd $REMOTE_DIR && if [[ -f pids/backend/jetson.env ]]; then echo 'Existing pids/backend/jetson.env found; skipping environment bootstrap'; else pids/backend/setup_jetson_backend.sh; fi"
 
 cat <<EOF
 Deployed Jetson backend to $TARGET:$REMOTE_DIR

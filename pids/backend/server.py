@@ -23,6 +23,30 @@ import numpy as np
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 try:
+    import msgpack
+
+    try:
+        import msgpack_numpy as _msgpack_numpy
+
+        _msgpack_numpy.patch()
+        HAS_MSGPACK_NUMPY = True
+    except Exception:
+        HAS_MSGPACK_NUMPY = False
+    HAS_MSGPACK = True
+except Exception:
+    msgpack = None  # type: ignore
+    HAS_MSGPACK = False
+    HAS_MSGPACK_NUMPY = False
+
+try:
+    import zmq
+
+    HAS_ZMQ = True
+except Exception:
+    zmq = None  # type: ignore
+    HAS_ZMQ = False
+
+try:
     from flirpy.camera.boson import Boson
 except Exception:
     Boson = None
@@ -62,6 +86,44 @@ class ThermalPacket:
     radiometric: bool
 
 
+@dataclass
+class BackendDetection:
+    track_id: int
+    center: np.ndarray
+    size: np.ndarray
+    yaw: float
+    class_id: int
+    class_name: str
+    score: float
+    model_score: float = 0.0
+    velocity: np.ndarray = None
+    age: int = 1
+    misses: int = 0
+    support_points: int = 0
+    support_z_span: float = 0.0
+    source: str = "detector"
+    thermal_score: float = 0.0
+    thermal_coverage: float = 0.0
+    thermal_mean: float = 0.0
+    thermal_max: float = 0.0
+    thermal_hot_fraction: float = 0.0
+    fusion_score: float = 0.0
+    fusion_note: str = ""
+    pointpillars_support: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.center = np.asarray(self.center, dtype=np.float32)
+        self.size = np.asarray(self.size, dtype=np.float32)
+        if self.velocity is None:
+            self.velocity = np.zeros(3, dtype=np.float32)
+        else:
+            self.velocity = np.asarray(self.velocity, dtype=np.float32)
+        if self.model_score <= 0.0:
+            self.model_score = self.score
+        if self.fusion_score <= 0.0:
+            self.fusion_score = self.score
+
+
 class ThermalCamera:
     def __init__(self, device: Optional[int], fps: float) -> None:
         self.device = device
@@ -69,6 +131,7 @@ class ThermalCamera:
         self.cap: Optional[cv2.VideoCapture] = None
         self.boson = None
         self.seq = 0
+        self.last_packet: Optional[ThermalPacket] = None
 
     def open(self) -> None:
         if self.device is None or self.device < 0:
@@ -109,6 +172,7 @@ class ThermalCamera:
 
         packet = normalize_thermal(frame)
         self.seq += 1
+        self.last_packet = packet
         return packet
 
     def trigger_ffc(self) -> bool:
@@ -175,10 +239,10 @@ class LidarStreamer:
         )
 
     def read_binary(self) -> bytes:
-        frame_bytes, _points = self.read_binary_frame()
+        frame_bytes, _points, _intensities = self.read_binary_frame()
         return frame_bytes
 
-    def read_binary_frame(self) -> tuple[bytes, np.ndarray]:
+    def read_binary_frame(self) -> tuple[bytes, np.ndarray, np.ndarray]:
         if self.scans is None or self.xyz_lut is None:
             self.open()
 
@@ -187,7 +251,7 @@ class LidarStreamer:
         payload, n = pack_lidar_binary(points, intensities, self.max_points)
         self.seq += 1
         header = struct.pack("<4sIIId", b"PCLD", 1, self.seq, n, time.time())
-        return header + payload, points
+        return header + payload, points, intensities
 
     def _next_scan(self):
         while True:
@@ -304,7 +368,15 @@ class CameraStreamer:
 
 
 class DetectionEngine:
-    def __init__(self, mode: str, fps: float) -> None:
+    def __init__(
+        self,
+        mode: str,
+        fps: float,
+        *,
+        pointpillars_endpoint: str = "",
+        pointpillars_timeout_ms: int = 250,
+        pointpillars_max_points: int = 80_000,
+    ) -> None:
         self.mode = mode
         self.period = 1.0 / max(fps, 0.1)
         self._last_run_t = 0.0
@@ -314,42 +386,83 @@ class DetectionEngine:
         self._params = None
         self._classifier = None
         self._tracker = None
+        self._pointpillars = None
+        self._pointpillars_tracker = SimpleDetectionTracker(max_distance=3.0, max_misses=5)
+        self._pointpillars_error = ""
         self._load_error = ""
 
-        if mode == "indoor_human":
+        if mode in ("indoor_human", "auto"):
             self._configure_indoor_human()
-        elif mode not in ("off", ""):
+        if mode in ("pointpillars", "auto"):
+            self._configure_pointpillars(pointpillars_endpoint, pointpillars_timeout_ms, pointpillars_max_points)
+        if mode not in ("off", "", "indoor_human", "pointpillars", "auto"):
             self._load_error = f"unknown detection mode: {mode}"
 
-    def maybe_process(self, points: np.ndarray) -> dict:
+    def maybe_process(
+        self,
+        points: np.ndarray,
+        intensities: Optional[np.ndarray] = None,
+        thermal_packet: Optional[ThermalPacket] = None,
+    ) -> dict:
         now = time.monotonic()
         if self.mode in ("off", ""):
             return self._empty("detector off")
-        if self._indoor is None:
-            return self._empty(self._load_error or "detector unavailable")
+        if self._load_error:
+            return self._empty(self._load_error)
         if now - self._last_run_t < self.period:
             return self._last_result
 
         self._last_run_t = now
         t0 = time.monotonic()
+        boxes: list = []
+        debug_count = 0
+        status_parts: list[str] = []
+        pointpillars_tracked: list[BackendDetection] = []
         try:
-            candidates, detail, debug = self._indoor.detect_human_candidates(
-                points,
-                self._params,
-                self._classifier,
-            )
             scan_now = time.monotonic()
             dt = scan_now - self._last_scan_t
             self._last_scan_t = scan_now
-            tracked = self._tracker.update(candidates, dt)
+
+            if self.mode in ("pointpillars", "auto"):
+                pointpillars_raw, pp_status = self._run_pointpillars(points, intensities, dt)
+                pointpillars_tracked = pointpillars_raw
+                status_parts.append(pp_status)
+
+            if self.mode in ("indoor_human", "auto"):
+                if self._indoor is None:
+                    status_parts.append(self._load_error or "indoor detector unavailable")
+                else:
+                    candidates, detail, debug = self._indoor.detect_human_candidates(
+                        points,
+                        self._params,
+                        self._classifier,
+                    )
+                    tracked = self._tracker.update(candidates, dt)
+                    annotate_pointpillars_support(tracked, pointpillars_tracked)
+                    apply_thermal_fusion(tracked, points, thermal_packet)
+                    boxes.extend(tracked)
+                    debug_count = len(debug)
+                    status_parts.append(f"indoor | {detail} -> {len(tracked)} confirmed")
+
+            if self.mode == "pointpillars":
+                apply_thermal_fusion(pointpillars_tracked, points, thermal_packet)
+                boxes = pointpillars_tracked
+            elif self.mode == "auto":
+                extra = [
+                    det for det in pointpillars_tracked
+                    if det.class_id in (0, 2) and not overlaps_existing(det, boxes)
+                ]
+                apply_thermal_fusion(extra, points, thermal_packet)
+                boxes.extend(extra)
+
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self._last_result = {
                 "mode": self.mode,
-                "source": "indoor_human",
-                "status": f"indoor {elapsed_ms:.0f}ms | {detail} -> {len(tracked)} confirmed",
+                "source": self.mode if self.mode != "indoor_human" else "indoor_human",
+                "status": f"{elapsed_ms:.0f}ms | {' | '.join(status_parts) or 'no detector output'}",
                 "elapsed_ms": round(elapsed_ms, 1),
-                "boxes": [detection_to_json(det) for det in tracked],
-                "debug_count": len(debug),
+                "boxes": [detection_to_json(det) for det in boxes],
+                "debug_count": debug_count,
                 "ts": time.time(),
             }
         except Exception as exc:
@@ -366,6 +479,31 @@ class DetectionEngine:
         self._classifier = indoor.CropClassifier()
         self._tracker = indoor.HumanTrackTracker(self._params)
         self._last_result = self._empty("indoor human ready")
+
+    def _configure_pointpillars(self, endpoint: str, timeout_ms: int, max_points: int) -> None:
+        self._pointpillars = PointPillarsClient(endpoint, timeout_ms, max_points)
+        if not self._pointpillars.available:
+            self._pointpillars_error = self._pointpillars.unavailable_reason
+
+    def _run_pointpillars(
+        self,
+        points: np.ndarray,
+        intensities: Optional[np.ndarray],
+        dt: float,
+    ) -> tuple[list[BackendDetection], str]:
+        if self._pointpillars is None:
+            return [], "pointpillars disabled"
+        if not self._pointpillars.available:
+            return [], self._pointpillars.unavailable_reason
+
+        try:
+            vals = intensities if intensities is not None else np.zeros(len(points), dtype=np.float32)
+            raw, _elapsed_ms, status = self._pointpillars.infer(points, vals)
+            tracked = self._pointpillars_tracker.update(raw, dt)
+            return tracked, f"{status} -> {len(tracked)} confirmed"
+        except Exception as exc:
+            self._pointpillars_error = str(exc)
+            return [], f"pointpillars unavailable: {exc}"
 
     def _empty(self, status: str) -> dict:
         return {
@@ -610,12 +748,641 @@ def pack_lidar_binary(points: np.ndarray, intensities: np.ndarray, max_points: i
     return out.tobytes(), n
 
 
+KITTI_CLASS_NAMES = ("Car", "Pedestrian", "Cyclist")
+KITTI_POINT_CLOUD_RANGE = np.array([0.0, -39.68, -3.0, 69.12, 39.68, 1.0], dtype=np.float32)
+KITTI_GROUND_Z_M = -1.60
+POINTPILLARS_SCORE_THRESHOLD = 0.12
+
+
+@dataclass
+class PreparedPointPillarsPoints:
+    points: np.ndarray
+    original_xyz: np.ndarray
+    z_shift: float
+
+
+class SimpleDetectionTracker:
+    def __init__(
+        self,
+        *,
+        max_distance: float = 2.4,
+        max_misses: int = 5,
+        confirm_hits: int = 2,
+        immediate_score: float = 0.82,
+    ) -> None:
+        self.max_distance = max_distance
+        self.max_misses = max_misses
+        self.confirm_hits = confirm_hits
+        self.immediate_score = immediate_score
+        self.next_id = 1
+        self.tracks: dict[int, BackendDetection] = {}
+        self.hits: dict[int, int] = {}
+        self.misses: dict[int, int] = {}
+
+    def update(self, raw: list[BackendDetection], dt: float) -> list[BackendDetection]:
+        if not raw:
+            for tid in list(self.tracks):
+                self.misses[tid] = self.misses.get(tid, 0) + 1
+                self.tracks[tid].misses = self.misses[tid]
+                self.tracks[tid].age += 1
+                if self.misses[tid] > self.max_misses:
+                    self.tracks.pop(tid, None)
+                    self.hits.pop(tid, None)
+                    self.misses.pop(tid, None)
+            return self._confirmed()
+
+        if not self.tracks:
+            for det in raw:
+                self._spawn(det)
+            return self._confirmed()
+
+        tids = list(self.tracks.keys())
+        pairs: list[tuple[float, int, int]] = []
+        for di, det in enumerate(raw):
+            for ti, tid in enumerate(tids):
+                old = self.tracks[tid]
+                pairs.append((float(np.linalg.norm(det.center - old.center)), di, ti))
+        pairs.sort(key=lambda item: item[0])
+
+        used_det: set[int] = set()
+        used_track_idx: set[int] = set()
+        for dist, di, ti in pairs:
+            if dist > self.max_distance:
+                break
+            if di in used_det or ti in used_track_idx:
+                continue
+            tid = tids[ti]
+            old = self.tracks[tid]
+            det = raw[di]
+            det.track_id = tid
+            det.age = old.age + 1
+            det.misses = 0
+            if dt > 0:
+                det.velocity = (det.center - old.center) / dt
+            self.tracks[tid] = det
+            self.hits[tid] = self.hits.get(tid, 1) + 1
+            self.misses[tid] = 0
+            used_det.add(di)
+            used_track_idx.add(ti)
+
+        for di, det in enumerate(raw):
+            if di not in used_det:
+                self._spawn(det)
+
+        matched = {tids[ti] for ti in used_track_idx}
+        for tid in list(self.tracks):
+            if tid in matched:
+                continue
+            self.misses[tid] = self.misses.get(tid, 0) + 1
+            self.tracks[tid].misses = self.misses[tid]
+            self.tracks[tid].age += 1
+            if self.misses[tid] > self.max_misses:
+                self.tracks.pop(tid, None)
+                self.hits.pop(tid, None)
+                self.misses.pop(tid, None)
+
+        return self._confirmed()
+
+    def _spawn(self, det: BackendDetection) -> None:
+        tid = self.next_id
+        self.next_id += 1
+        det.track_id = tid
+        det.age = 1
+        det.misses = 0
+        self.tracks[tid] = det
+        self.hits[tid] = 1
+        self.misses[tid] = 0
+
+    def _confirmed(self) -> list[BackendDetection]:
+        out = [
+            det
+            for tid, det in self.tracks.items()
+            if self.misses.get(tid, 0) <= 1
+            and (self.hits.get(tid, 0) >= self.confirm_hits or det.model_score >= self.immediate_score)
+        ]
+        out.sort(key=lambda det: det.track_id)
+        return out
+
+
+class PointPillarsClient:
+    def __init__(self, endpoint: str, timeout_ms: int, max_points: int) -> None:
+        self.endpoint = endpoint.strip()
+        self.timeout_ms = max(50, int(timeout_ms))
+        self.max_points = max(1024, int(max_points))
+        self._ctx = None
+        self._sock = None
+        self._sock_endpoint = ""
+        self._seq = 0
+
+    @property
+    def available(self) -> bool:
+        return bool(self.endpoint) and HAS_ZMQ and HAS_MSGPACK
+
+    @property
+    def unavailable_reason(self) -> str:
+        if not self.endpoint:
+            return "pointpillars disabled"
+        if not HAS_ZMQ:
+            return "pyzmq missing"
+        if not HAS_MSGPACK:
+            return "msgpack missing"
+        return ""
+
+    def infer(self, xyz: np.ndarray, intensities: np.ndarray) -> tuple[list[BackendDetection], float, str]:
+        if not self.available:
+            raise RuntimeError(self.unavailable_reason)
+
+        prepared = prepare_pointpillars_points(
+            xyz,
+            intensities,
+            max_points=self.max_points,
+        )
+        if len(prepared.points) == 0:
+            return [], 0.0, "pointpillars no points"
+
+        sock = self._socket()
+        self._seq += 1
+        request = encode_pointpillars_request(prepared.points, self._seq)
+        t0 = time.monotonic()
+        try:
+            sock.send(request)
+            reply = sock.recv()
+        except Exception:
+            self.close()
+            raise
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+
+        payload = decode_pointpillars_response(reply)
+        if payload.get("type") == "error":
+            raise RuntimeError(str(payload.get("message", "pointpillars error")))
+
+        raw = pointpillars_detections_from_payload(
+            payload,
+            POINTPILLARS_SCORE_THRESHOLD,
+            points_xyz=prepared.original_xyz,
+            z_shift=prepared.z_shift,
+        )
+        model_ms = payload.get("model_ms")
+        if model_ms is not None:
+            status = f"pointpillars {float(model_ms):.0f}ms model / {elapsed_ms:.0f}ms rtt | {len(raw)} raw"
+        else:
+            status = f"pointpillars {elapsed_ms:.0f}ms rtt | {len(raw)} raw"
+        return raw, elapsed_ms, status
+
+    def close(self) -> None:
+        if self._sock is not None:
+            try:
+                self._sock.close(0)
+            except Exception:
+                pass
+        self._sock = None
+        self._sock_endpoint = ""
+
+    def _socket(self):
+        if self._sock is not None and self._sock_endpoint == self.endpoint:
+            return self._sock
+        self.close()
+        if self._ctx is None:
+            self._ctx = zmq.Context.instance()
+        sock = self._ctx.socket(zmq.REQ)
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
+        sock.setsockopt(zmq.SNDTIMEO, self.timeout_ms)
+        sock.connect(self.endpoint)
+        self._sock = sock
+        self._sock_endpoint = self.endpoint
+        return sock
+
+
+def prepare_pointpillars_points(
+    xyz: np.ndarray,
+    intensities: np.ndarray,
+    *,
+    range_min: float = 0.3,
+    range_max: float = 80.0,
+    max_points: int = 80_000,
+) -> PreparedPointPillarsPoints:
+    pts_xyz = np.asarray(xyz, dtype=np.float32).reshape(-1, 3)
+    vals = np.asarray(intensities, dtype=np.float32).reshape(-1)
+    if len(vals) != len(pts_xyz):
+        vals = np.zeros(len(pts_xyz), dtype=np.float32)
+
+    finite = np.isfinite(pts_xyz).all(axis=1)
+    rng = np.linalg.norm(pts_xyz, axis=1)
+    base_keep = (
+        finite
+        & (rng >= range_min)
+        & (rng <= range_max)
+        & (pts_xyz[:, 0] >= KITTI_POINT_CLOUD_RANGE[0])
+        & (pts_xyz[:, 0] < KITTI_POINT_CLOUD_RANGE[3])
+        & (pts_xyz[:, 1] >= KITTI_POINT_CLOUD_RANGE[1])
+        & (pts_xyz[:, 1] < KITTI_POINT_CLOUD_RANGE[4])
+    )
+    z_shift = estimate_kitti_z_shift(pts_xyz[base_keep])
+    shifted_z = pts_xyz[:, 2] + z_shift
+    keep = (
+        base_keep
+        & (shifted_z >= KITTI_POINT_CLOUD_RANGE[2])
+        & (shifted_z < KITTI_POINT_CLOUD_RANGE[5])
+    )
+    if not np.any(keep):
+        empty = np.empty((0, 4), dtype=np.float32)
+        return PreparedPointPillarsPoints(empty, np.empty((0, 3), dtype=np.float32), z_shift)
+
+    original_xyz = pts_xyz[keep].copy()
+    shifted_xyz = original_xyz.copy()
+    shifted_xyz[:, 2] += z_shift
+    intensity = np.nan_to_num(vals[keep], nan=0.0, posinf=0.0, neginf=0.0)
+    intensity = np.clip(intensity, 0.0, 1.0).astype(np.float32, copy=False)
+    if len(shifted_xyz) > max_points:
+        idx = balanced_sample_indices(shifted_xyz, max_points)
+        shifted_xyz = shifted_xyz[idx]
+        original_xyz = original_xyz[idx]
+        intensity = intensity[idx]
+
+    points = np.column_stack((shifted_xyz, intensity)).astype(np.float32, copy=False)
+    return PreparedPointPillarsPoints(points, original_xyz, z_shift)
+
+
+def estimate_kitti_z_shift(xyz: np.ndarray) -> float:
+    if len(xyz) < 256:
+        return 0.0
+    near = xyz[(xyz[:, 0] > 2.0) & (xyz[:, 0] < 35.0) & (np.abs(xyz[:, 1]) < 15.0)]
+    if len(near) < 256:
+        near = xyz
+    ground_z = float(np.percentile(near[:, 2], 5.0))
+    return float(np.clip(KITTI_GROUND_Z_M - ground_z, -2.5, 1.0))
+
+
+def balanced_sample_indices(points: np.ndarray, max_points: int) -> np.ndarray:
+    if len(points) <= max_points:
+        return np.arange(len(points), dtype=np.int64)
+    near = np.flatnonzero((points[:, 0] < 35.0) & (np.abs(points[:, 1]) < 18.0))
+    far = np.setdiff1d(np.arange(len(points), dtype=np.int64), near, assume_unique=True)
+    near_budget = min(len(near), int(max_points * 0.75))
+    far_budget = max_points - near_budget
+    parts = []
+    if near_budget > 0:
+        parts.append(near[np.linspace(0, len(near) - 1, near_budget, dtype=np.int64)])
+    if far_budget > 0 and len(far) > 0:
+        parts.append(far[np.linspace(0, len(far) - 1, min(far_budget, len(far)), dtype=np.int64)])
+    return np.sort(np.concatenate(parts)).astype(np.int64, copy=False)
+
+
+def encode_pointpillars_request(points: np.ndarray, seq: int) -> bytes:
+    if not HAS_MSGPACK:
+        raise RuntimeError("msgpack missing")
+    payload = {
+        "type": "scan",
+        "seq": seq,
+        "points": points if HAS_MSGPACK_NUMPY else points.tobytes(),
+        "shape": points.shape,
+        "dtype": "float32",
+        "encoding": "msgpack-numpy" if HAS_MSGPACK_NUMPY else "raw",
+    }
+    return msgpack.packb(payload, use_bin_type=True)
+
+
+def decode_pointpillars_response(blob: bytes) -> dict:
+    if not HAS_MSGPACK:
+        raise RuntimeError("msgpack missing")
+    return msgpack.unpackb(blob, raw=False)
+
+
+def pointpillars_score_floor(class_id: int, range_m: float) -> float:
+    base = {
+        0: 0.40,
+        1: 0.24,
+        2: 0.32,
+    }.get(class_id, POINTPILLARS_SCORE_THRESHOLD)
+    if range_m > 35.0:
+        base += 0.08
+    return base
+
+
+def pointpillars_class_name(class_id: int) -> str:
+    if 0 <= class_id < len(KITTI_CLASS_NAMES):
+        return KITTI_CLASS_NAMES[class_id]
+    return f"class {class_id}"
+
+
+def pointpillars_passes_geometry(class_id: int, size: np.ndarray) -> bool:
+    dx, dy, dz = [float(v) for v in size]
+    footprint = max(dx, dy)
+    if class_id == 1:
+        return 0.6 <= dz <= 2.5 and 0.15 <= min(dx, dy) and footprint <= 1.6
+    if class_id == 2:
+        return 0.8 <= dz <= 2.4 and 0.25 <= min(dx, dy) and footprint <= 2.5
+    if class_id == 0:
+        return 0.8 <= dz <= 3.2 and 1.0 <= footprint <= 7.0
+    return True
+
+
+def pointpillars_box_support(
+    points_xyz: np.ndarray,
+    center: np.ndarray,
+    size: np.ndarray,
+    yaw: float,
+) -> tuple[int, float]:
+    if len(points_xyz) == 0:
+        return 0, 0.0
+    inside = points_in_oriented_box(points_xyz, center, size, yaw, margin=(0.25, 0.25, 0.25))
+    if not np.any(inside):
+        return 0, 0.0
+    z_vals = points_xyz[inside, 2] - float(center[2])
+    return int(len(z_vals)), float(np.percentile(z_vals, 95) - np.percentile(z_vals, 5))
+
+
+def pointpillars_passes_support(class_id: int, score: float, support_points: int, z_span: float) -> bool:
+    if class_id == 1:
+        if score >= 0.55:
+            return support_points >= 3 and z_span >= 0.20
+        if score >= 0.32:
+            return support_points >= 5 and z_span >= 0.25
+        return support_points >= 8 and z_span >= 0.32
+    if class_id == 2:
+        return support_points >= 8 and z_span >= 0.35
+    if class_id == 0:
+        return support_points >= 18 and z_span >= 0.35
+    return support_points >= 4
+
+
+def pointpillars_detections_from_payload(
+    payload: dict,
+    score_threshold: float,
+    *,
+    points_xyz: np.ndarray,
+    z_shift: float,
+) -> list[BackendDetection]:
+    out: list[BackendDetection] = []
+    for item in payload.get("detections", []):
+        score = float(item.get("score", 0.0))
+        center = np.asarray(item.get("center", item.get("translation", [0, 0, 0])), dtype=np.float32)
+        size = np.asarray(item.get("size", item.get("dimensions", [0, 0, 0])), dtype=np.float32)
+        if center.shape != (3,) or size.shape != (3,):
+            continue
+        center = center.copy()
+        center[2] -= float(z_shift)
+        class_id = int(item.get("class_id", item.get("label", -1)))
+        range_m = float(np.linalg.norm(center[:2]))
+        if score < max(score_threshold, pointpillars_score_floor(class_id, range_m)):
+            continue
+        if not pointpillars_passes_geometry(class_id, size):
+            continue
+        yaw = float(item.get("yaw", item.get("heading", 0.0)))
+        support_points, support_z_span = pointpillars_box_support(points_xyz, center, size, yaw)
+        if not pointpillars_passes_support(class_id, score, support_points, support_z_span):
+            continue
+        out.append(
+            BackendDetection(
+                track_id=0,
+                center=center,
+                size=size,
+                yaw=yaw,
+                class_id=class_id,
+                class_name=str(item.get("class_name", item.get("name", pointpillars_class_name(class_id)))),
+                score=score,
+                model_score=score,
+                support_points=support_points,
+                support_z_span=support_z_span,
+                source="pointpillars",
+                pointpillars_support=score,
+            )
+        )
+    return out
+
+
+def annotate_pointpillars_support(detections: list, pointpillars: list[BackendDetection]) -> None:
+    if not detections or not pointpillars:
+        return
+    for det in detections:
+        best = 0.0
+        for pp in pointpillars:
+            dist = float(np.linalg.norm(np.asarray(pp.center) - np.asarray(getattr(det, "center", [0, 0, 0]))))
+            if dist > 1.25:
+                continue
+            overlap = axis_aligned_iou(
+                np.asarray(getattr(det, "center", [0, 0, 0]), dtype=np.float32),
+                np.asarray(getattr(det, "size", [0, 0, 0]), dtype=np.float32),
+                pp.center,
+                pp.size,
+            )
+            proximity = 1.0 - float(np.clip(dist / 1.25, 0.0, 1.0))
+            best = max(best, float(pp.model_score or pp.score) * max(overlap, 0.35 * proximity))
+        setattr(det, "pointpillars_support", float(best))
+
+
+def overlaps_existing(det: BackendDetection, existing: list) -> bool:
+    for old in existing:
+        old_center = np.asarray(getattr(old, "center", [0, 0, 0]), dtype=np.float32)
+        old_size = np.asarray(getattr(old, "size", [0, 0, 0]), dtype=np.float32)
+        if float(np.linalg.norm(det.center - old_center)) < 0.45:
+            return True
+        if axis_aligned_iou(det.center, det.size, old_center, old_size) > 0.25:
+            return True
+    return False
+
+
+def axis_aligned_iou(a_center: np.ndarray, a_size: np.ndarray, b_center: np.ndarray, b_size: np.ndarray) -> float:
+    a_mn, a_mx = a_center - a_size * 0.5, a_center + a_size * 0.5
+    b_mn, b_mx = b_center - b_size * 0.5, b_center + b_size * 0.5
+    inter = np.maximum(0.0, np.minimum(a_mx, b_mx) - np.maximum(a_mn, b_mn))
+    inter_vol = float(np.prod(inter))
+    if inter_vol <= 0.0:
+        return 0.0
+    a_vol = float(np.prod(np.maximum(a_size, 1e-3)))
+    b_vol = float(np.prod(np.maximum(b_size, 1e-3)))
+    return inter_vol / max(a_vol + b_vol - inter_vol, 1e-6)
+
+
+THERMAL_INTR = {
+    "width": 640,
+    "height": 512,
+    "fx": 1092.1914623848218,
+    "fy": 1092.1914623848218,
+    "cx": 320.0,
+    "cy": 256.0,
+}
+THERMAL_EXTR = {
+    "tx": 0.0,
+    "ty": 0.0,
+    "tz": -0.225,
+    "roll_deg": 0.0,
+    "pitch_deg": 0.0,
+    "yaw_deg": 0.0,
+}
+R_LIDAR_TO_CAM_BASE = np.array(
+    [[0.0, -1.0, 0.0], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]],
+    dtype=np.float64,
+)
+
+
+def apply_thermal_fusion(detections: list, points: np.ndarray, thermal_packet: Optional[ThermalPacket]) -> None:
+    if thermal_packet is None or thermal_packet.pixels is None or thermal_packet.pixels.size == 0:
+        for det in detections:
+            base_score = float(getattr(det, "score", 0.0))
+            pp_support = float(getattr(det, "pointpillars_support", 0.0))
+            fused = min(0.99, base_score + 0.06 * np.clip(pp_support, 0.0, 1.0))
+            setattr(det, "fusion_score", float(fused))
+            setattr(det, "fusion_note", "thermal_unavailable+pointpillars_support" if pp_support > 0 else "thermal_unavailable")
+            setattr(det, "score", float(fused))
+        return
+
+    pixels = thermal_packet.pixels.astype(np.float32) / 255.0
+    sample = pixels.reshape(-1)
+    if sample.size > 20000:
+        sample = sample[:: max(1, sample.size // 20000)]
+    global_mean = float(np.mean(sample))
+    global_std = max(float(np.std(sample)), 1e-6)
+
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    finite = np.isfinite(pts).all(axis=1)
+    pts = pts[finite]
+    for det in detections:
+        base_score = float(getattr(det, "score", 0.0))
+        metrics = thermal_metrics_for_detection(det, pts, pixels, global_mean, global_std)
+        if metrics is None:
+            pp_support = float(getattr(det, "pointpillars_support", 0.0))
+            fused = min(0.99, base_score + 0.06 * np.clip(pp_support, 0.0, 1.0))
+            setattr(det, "thermal_score", 0.0)
+            setattr(det, "thermal_coverage", 0.0)
+            setattr(det, "thermal_mean", 0.0)
+            setattr(det, "thermal_max", 0.0)
+            setattr(det, "thermal_hot_fraction", 0.0)
+            setattr(det, "fusion_score", float(fused))
+            setattr(det, "fusion_note", "thermal_unavailable+pointpillars_support" if pp_support > 0 else "thermal_unavailable")
+            setattr(det, "score", float(fused))
+            continue
+
+        for key, value in metrics.items():
+            setattr(det, f"thermal_{key}" if key in {"score", "coverage", "mean", "max"} else key, value)
+        setattr(det, "thermal_hot_fraction", metrics["hot_fraction"])
+
+        fused = base_score
+        if metrics["coverage"] >= 0.12:
+            if metrics["score"] >= 0.62:
+                boost = 0.10 + 0.12 * np.clip((metrics["score"] - 0.62) / 0.38, 0.0, 1.0)
+                fused = min(0.99, fused + boost)
+                note = "thermal_boost"
+            elif metrics["score"] <= 0.28 and metrics["coverage"] >= 0.35:
+                fused = max(0.05, fused * 0.78)
+                note = "thermal_cool"
+            else:
+                note = "thermal_neutral"
+        else:
+            note = "thermal_low_coverage"
+        pp_support = float(getattr(det, "pointpillars_support", 0.0))
+        if pp_support > 0:
+            fused = min(0.99, fused + 0.06 * np.clip(pp_support, 0.0, 1.0))
+            note = f"{note}+pointpillars_support"
+        setattr(det, "fusion_score", float(fused))
+        setattr(det, "fusion_note", note)
+        setattr(det, "score", float(fused))
+
+
+def thermal_metrics_for_detection(
+    det,
+    points: np.ndarray,
+    pixels: np.ndarray,
+    global_mean: float,
+    global_std: float,
+) -> Optional[dict[str, float]]:
+    if points.size == 0:
+        return None
+    center = np.asarray(getattr(det, "center", [0, 0, 0]), dtype=np.float32)
+    size = np.asarray(getattr(det, "size", [0, 0, 0]), dtype=np.float32)
+    yaw = float(getattr(det, "yaw", 0.0))
+    inside = points_in_oriented_box(points, center, size, yaw, margin=(0.25, 0.25, 0.15))
+    if not np.any(inside):
+        return None
+    roi = points[inside]
+    if len(roi) > 4096:
+        roi = roi[np.linspace(0, len(roi) - 1, 4096, dtype=np.int64)]
+
+    uv, valid = project_lidar_to_thermal(roi)
+    coverage = float(np.count_nonzero(valid) / max(len(roi), 1))
+    if not np.any(valid):
+        return {"score": 0.0, "coverage": coverage, "mean": 0.0, "max": 0.0, "hot_fraction": 0.0}
+
+    h, w = pixels.shape[:2]
+    scale_u = w / max(float(THERMAL_INTR["width"]), 1.0)
+    scale_v = h / max(float(THERMAL_INTR["height"]), 1.0)
+    u = np.clip((uv[valid, 0].astype(np.float32) * scale_u).astype(np.int32), 0, w - 1)
+    v = np.clip((uv[valid, 1].astype(np.float32) * scale_v).astype(np.int32), 0, h - 1)
+    vals = pixels[v, u].astype(np.float32)
+    mean = float(np.mean(vals))
+    max_val = float(np.max(vals))
+    hot_threshold = max(0.62, global_mean + 0.65 * global_std)
+    hot_fraction = float(np.count_nonzero(vals >= hot_threshold) / max(len(vals), 1))
+    contrast = float(np.clip((mean - global_mean) / max(global_std * 1.8, 0.12), -1.0, 1.0))
+    score = float(np.clip(0.46 * max_val + 0.34 * hot_fraction + 0.20 * ((contrast + 1.0) * 0.5), 0.0, 1.0))
+    return {"score": score, "coverage": coverage, "mean": mean, "max": max_val, "hot_fraction": hot_fraction}
+
+
+def points_in_oriented_box(
+    points: np.ndarray,
+    center: np.ndarray,
+    size: np.ndarray,
+    yaw: float,
+    margin: tuple[float, float, float],
+) -> np.ndarray:
+    delta = points - center
+    c = float(np.cos(yaw))
+    s = float(np.sin(yaw))
+    local_x = c * delta[:, 0] + s * delta[:, 1]
+    local_y = -s * delta[:, 0] + c * delta[:, 1]
+    local_z = delta[:, 2]
+    half = np.maximum(size * 0.5, 0.05) + np.asarray(margin, dtype=np.float32)
+    return (
+        (np.abs(local_x) <= half[0])
+        & (np.abs(local_y) <= half[1])
+        & (np.abs(local_z) <= half[2])
+    )
+
+
+def project_lidar_to_thermal(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    r_user = euler_to_r(
+        np.deg2rad(THERMAL_EXTR["roll_deg"]),
+        np.deg2rad(THERMAL_EXTR["pitch_deg"]),
+        np.deg2rad(THERMAL_EXTR["yaw_deg"]),
+    )
+    r = r_user @ R_LIDAR_TO_CAM_BASE
+    t = np.array([THERMAL_EXTR["tx"], THERMAL_EXTR["ty"], THERMAL_EXTR["tz"]], dtype=np.float64)
+    cam = (r @ points.astype(np.float64).T).T + t
+    z = cam[:, 2]
+    in_front = z > 0.05
+    safe_z = np.where(in_front, z, 1.0)
+    u = (THERMAL_INTR["fx"] * cam[:, 0] / safe_z + THERMAL_INTR["cx"]).astype(np.int32)
+    v = (THERMAL_INTR["fy"] * cam[:, 1] / safe_z + THERMAL_INTR["cy"]).astype(np.int32)
+    valid = (
+        in_front
+        & (u >= 0)
+        & (u < int(THERMAL_INTR["width"]))
+        & (v >= 0)
+        & (v < int(THERMAL_INTR["height"]))
+    )
+    uv = np.full((len(points), 2), -1, dtype=np.int32)
+    uv[valid, 0] = u[valid]
+    uv[valid, 1] = v[valid]
+    return uv, valid
+
+
+def euler_to_r(roll: float, pitch: float, yaw: float) -> np.ndarray:
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
+    ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+    rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+    return rz @ ry @ rx
+
+
 def detection_to_json(det) -> dict:
     def vec3(value) -> list[float]:
         arr = np.asarray(value, dtype=np.float32).reshape(-1)
         return [round(float(v), 4) for v in arr[:3]]
 
-    return {
+    data = {
         "track_id": int(getattr(det, "track_id", 0)),
         "center": vec3(getattr(det, "center", [0, 0, 0])),
         "size": vec3(getattr(det, "size", [0.2, 0.2, 0.2])),
@@ -628,7 +1395,19 @@ def detection_to_json(det) -> dict:
         "misses": int(getattr(det, "misses", 0)),
         "support_points": int(getattr(det, "support_points", getattr(det, "n_points", 0))),
         "support_z_span": round(float(getattr(det, "support_z_span", 0.0)), 4),
+        "thermal_score": round(float(getattr(det, "thermal_score", 0.0)), 4),
+        "thermal_coverage": round(float(getattr(det, "thermal_coverage", 0.0)), 4),
+        "thermal_mean": round(float(getattr(det, "thermal_mean", 0.0)), 4),
+        "thermal_max": round(float(getattr(det, "thermal_max", 0.0)), 4),
+        "thermal_hot_fraction": round(float(getattr(det, "thermal_hot_fraction", 0.0)), 4),
+        "fusion_score": round(float(getattr(det, "fusion_score", getattr(det, "score", 0.0))), 4),
+        "fusion_note": str(getattr(det, "fusion_note", "")),
+        "pointpillars_support": round(float(getattr(det, "pointpillars_support", 0.0)), 4),
     }
+    source = str(getattr(det, "source", "")).strip()
+    if source:
+        data["source"] = source
+    return data
 
 
 def load_indoor_human_module():
@@ -841,14 +1620,15 @@ async def thermal_ws(request: web.Request) -> web.WebSocketResponse:
 async def lidar_ws(request: web.Request) -> web.WebSocketResponse:
     lidar: LidarStreamer = request.app["lidar_streamer"]
     detector: DetectionEngine = request.app["detection_engine"]
+    thermal: ThermalCamera = request.app["thermal_camera"]
     ws = web.WebSocketResponse(heartbeat=15)
     await ws.prepare(request)
 
     try:
         while not ws.closed:
-            frame_bytes, points = await asyncio.to_thread(lidar.read_binary_frame)
+            frame_bytes, points, intensities = await asyncio.to_thread(lidar.read_binary_frame)
             await ws.send_bytes(frame_bytes)
-            detections = await asyncio.to_thread(detector.maybe_process, points)
+            detections = await asyncio.to_thread(detector.maybe_process, points, intensities, thermal.last_packet)
             await ws.send_json({"type": "detections", **detections})
             await asyncio.sleep(lidar.period)
     except asyncio.CancelledError:
@@ -918,25 +1698,53 @@ async def gemini_chat(request: web.Request) -> web.Response:
 
 
 async def health(request: web.Request) -> web.Response:
+    thermal: ThermalCamera = request.app["thermal_camera"]
     lidar: LidarStreamer = request.app["lidar_streamer"]
     camera: CameraStreamer = request.app["camera_streamer"]
     detector: DetectionEngine = request.app["detection_engine"]
     gemini: GeminiSceneClient = request.app["gemini_client"]
+    static_dir: Optional[Path] = request.app.get("static_dir")
     return web.json_response(
         {
             "ok": True,
             "service": "pids-backend",
             "routes": ["/thermal", "/lidar", "/camera", "/gemini/chat"],
+            "serves_frontend": bool(static_dir),
+            "frontend_static_dir": str(static_dir) if static_dir else "",
+            "thermal_configured": thermal.device is not None and thermal.device >= 0,
+            "thermal_device": thermal.device,
             "lidar_configured": bool(lidar.host),
             "lidar_host": lidar.host,
             "camera_configured": camera.device is not None,
             "camera_device": camera.device,
             "detection_mode": detector.mode,
+            "pointpillars_configured": bool(detector._pointpillars and detector._pointpillars.endpoint),
+            "pointpillars_endpoint": detector._pointpillars.endpoint if detector._pointpillars else "",
+            "pointpillars_available": bool(detector._pointpillars and detector._pointpillars.available),
+            "pointpillars_error": detector._pointpillars_error,
             "gemini_model": gemini.model,
             "gemini_endpoint": gemini.endpoint_name,
             "gemini_project": gemini.project,
         }
     )
+
+
+async def frontend_index(request: web.Request) -> web.FileResponse:
+    static_dir: Optional[Path] = request.app.get("static_dir")
+    if not static_dir:
+        raise web.HTTPNotFound(text="frontend static build not found")
+    return web.FileResponse(static_dir / "index.html")
+
+
+def resolve_frontend_static_dir() -> Optional[Path]:
+    here = Path(__file__).resolve()
+    candidates = [here.parent / "static"]
+    for parent in here.parents:
+        candidates.append(parent / "backend" / "static")
+    for path in candidates:
+        if (path / "index.html").is_file():
+            return path
+    return None
 
 
 def build_app(
@@ -952,6 +1760,9 @@ def build_app(
     camera_jpeg_quality: int,
     detection_mode: str,
     detection_fps: float,
+    pointpillars_endpoint: str,
+    pointpillars_timeout_ms: int,
+    pointpillars_max_points: int,
     gemini_model: str,
     gemini_project: Optional[str],
     gemini_location: str,
@@ -974,7 +1785,13 @@ def build_app(
         height=camera_height,
         jpeg_quality=camera_jpeg_quality,
     )
-    app["detection_engine"] = DetectionEngine(mode=detection_mode, fps=detection_fps)
+    app["detection_engine"] = DetectionEngine(
+        mode=detection_mode,
+        fps=detection_fps,
+        pointpillars_endpoint=pointpillars_endpoint,
+        pointpillars_timeout_ms=pointpillars_timeout_ms,
+        pointpillars_max_points=pointpillars_max_points,
+    )
     app["gemini_client"] = GeminiSceneClient(
         model=gemini_model,
         project=gemini_project,
@@ -989,6 +1806,14 @@ def build_app(
     app.router.add_get("/lidar", lidar_ws)
     app.router.add_get("/camera", camera_ws)
     app.router.add_post("/gemini/chat", gemini_chat)
+    static_dir = resolve_frontend_static_dir()
+    app["static_dir"] = static_dir
+    if static_dir is not None:
+        assets_dir = static_dir / "assets"
+        if assets_dir.is_dir():
+            app.router.add_static("/assets", assets_dir, name="assets")
+        app.router.add_get("/", frontend_index)
+        app.router.add_get("/{tail:.*}", frontend_index)
     return app
 
 
@@ -1007,8 +1832,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-width", type=int, default=1280)
     parser.add_argument("--camera-height", type=int, default=720)
     parser.add_argument("--camera-jpeg-quality", type=int, default=75)
-    parser.add_argument("--detection-mode", default="indoor_human", choices=["off", "indoor_human"])
+    parser.add_argument("--detection-mode", default="indoor_human", choices=["off", "indoor_human", "pointpillars", "auto"])
     parser.add_argument("--detection-fps", type=float, default=2.0)
+    parser.add_argument("--pointpillars-endpoint", default=os.getenv("PIDS_POINTPILLARS_ENDPOINT", ""))
+    parser.add_argument("--pointpillars-timeout-ms", type=int, default=int(os.getenv("PIDS_POINTPILLARS_TIMEOUT_MS", "250")))
+    parser.add_argument("--pointpillars-max-points", type=int, default=int(os.getenv("PIDS_POINTPILLARS_MAX_POINTS", "80000")))
     parser.add_argument("--gemini-model", default=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
     parser.add_argument("--gemini-project", default=os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GOOGLE_CLOUD_QUOTA_PROJECT"))
     parser.add_argument("--gemini-location", default=os.getenv("GOOGLE_CLOUD_LOCATION", "global"))
@@ -1034,6 +1862,9 @@ def main() -> None:
         camera_jpeg_quality=args.camera_jpeg_quality,
         detection_mode=args.detection_mode,
         detection_fps=args.detection_fps,
+        pointpillars_endpoint=args.pointpillars_endpoint,
+        pointpillars_timeout_ms=args.pointpillars_timeout_ms,
+        pointpillars_max_points=args.pointpillars_max_points,
         gemini_model=args.gemini_model,
         gemini_project=args.gemini_project,
         gemini_location=args.gemini_location,
@@ -1047,9 +1878,12 @@ def main() -> None:
         camera: ThermalCamera = app["thermal_camera"]
         lidar: LidarStreamer = app["lidar_streamer"]
         visible_camera: CameraStreamer = app["camera_streamer"]
+        detector: DetectionEngine = app["detection_engine"]
         camera.close()
         lidar.close()
         visible_camera.close()
+        if detector._pointpillars is not None:
+            detector._pointpillars.close()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)

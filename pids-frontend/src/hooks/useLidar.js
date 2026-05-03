@@ -26,11 +26,16 @@ export function useLidar() {
 
         const env = JSON.parse(e.data)
         if (env.type === 'detections') {
-          setDetections(Array.isArray(env.boxes) ? env.boxes : [])
+          const source = env.source ?? env.mode ?? ''
+          setDetections(Array.isArray(env.boxes)
+            ? env.boxes.map(box => ({ source, mode: env.mode ?? '', ...box }))
+            : [])
           setDetectionMeta({
+            mode: env.mode ?? '',
             status: env.status ?? '',
-            source: env.source ?? env.mode ?? '',
+            source,
             elapsedMs: env.elapsed_ms ?? 0,
+            debugCount: env.debug_count ?? 0,
             ts: env.ts ?? 0,
           })
           return

@@ -12,7 +12,7 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 PYTHON_BIN="${PIDS_PYTHON:-python3}"
-if [[ -x "$ROOT_DIR/.venv-jetson/bin/python" ]]; then
+if [[ -z "${PIDS_PYTHON:-}" && -x "$ROOT_DIR/.venv-jetson/bin/python" ]]; then
   PYTHON_BIN="$ROOT_DIR/.venv-jetson/bin/python"
 fi
 
@@ -30,6 +30,9 @@ ARGS=(
   --camera-jpeg-quality "${PIDS_CAMERA_JPEG_QUALITY:-75}"
   --detection-mode "${PIDS_DETECTION_MODE:-indoor_human}"
   --detection-fps "${PIDS_DETECTION_FPS:-2}"
+  --pointpillars-endpoint "${PIDS_POINTPILLARS_ENDPOINT:-}"
+  --pointpillars-timeout-ms "${PIDS_POINTPILLARS_TIMEOUT_MS:-250}"
+  --pointpillars-max-points "${PIDS_POINTPILLARS_MAX_POINTS:-80000}"
   --gemini-model "${PIDS_GEMINI_MODEL:-${GEMINI_MODEL:-gemini-2.5-flash}}"
   --gemini-api-mode "${PIDS_GEMINI_API_MODE:-${GEMINI_API_MODE:-auto}}"
   --gemini-location "${PIDS_GEMINI_LOCATION:-${GOOGLE_CLOUD_LOCATION:-global}}"

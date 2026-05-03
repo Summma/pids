@@ -162,6 +162,7 @@ function sceneSnapshot(lidar, thermal, camera) {
       max_c: thermal.meta?.tMax ?? null,
       width: thermal.meta?.w ?? null,
       height: thermal.meta?.h ?? null,
+      error: thermal.error ?? '',
     },
     camera: {
       state: camera.connState,
