@@ -43,8 +43,10 @@ from fusion import (
     LENS_PRESETS,
     Extrinsics,
     ThermalIntrinsics,
+    camera_frustum_lines,
     colorize_with_thermal,
     intrinsics_from_hfov,
+    project_points,
 )
 from lidar import LidarFrame
 
@@ -212,6 +214,18 @@ class PointCloudWindow(QWidget):
         )
         self.view.addItem(self.scatter)
 
+        # Camera-FOV wireframe frustum (apex at camera origin, drawn out to a
+        # configurable depth in lidar coords). Updated whenever the calibration
+        # or the depth/visibility controls change.
+        self.fov_lines = gl.GLLinePlotItem(
+            pos=np.zeros((2, 3), dtype=np.float32),
+            color=(1.0, 0.85, 0.2, 0.9),
+            width=2,
+            antialias=True,
+            mode="lines",
+        )
+        self.view.addItem(self.fov_lines)
+
         # Cluster bounding boxes — recreated every frame
         self.box_items: list[gl.GLLinePlotItem] = []
 
@@ -314,6 +328,27 @@ class PointCloudWindow(QWidget):
         cal_box = QGroupBox("Thermal calibration (extrinsics)")
         cal_box.setLayout(cal)
 
+        # Camera-FOV overlay
+        self.fov_check = QCheckBox("Show camera FOV frustum")
+        self.fov_check.setChecked(True)
+        self.fov_check.toggled.connect(self._update_fov)
+        self.fov_depth_spin = QDoubleSpinBox()
+        self.fov_depth_spin.setRange(1.0, 100.0)
+        self.fov_depth_spin.setSingleStep(1.0)
+        self.fov_depth_spin.setDecimals(1)
+        self.fov_depth_spin.setValue(10.0)
+        self.fov_depth_spin.setSuffix(" m")
+        self.fov_depth_spin.valueChanged.connect(self._update_fov)
+        self.fov_crop_check = QCheckBox("Crop cloud to camera FOV")
+        self.fov_crop_check.setChecked(False)
+        self.fov_crop_check.toggled.connect(self._redraw)
+        fov_l = QFormLayout()
+        fov_l.addRow(self.fov_check)
+        fov_l.addRow("Depth:", self.fov_depth_spin)
+        fov_l.addRow(self.fov_crop_check)
+        fov_box = QGroupBox("Camera FOV")
+        fov_box.setLayout(fov_l)
+
         # Status
         self.status_lbl = QLabel("waiting for scans")
         self.status_lbl.setStyleSheet("color:#888;padding:2px;")
@@ -323,8 +358,11 @@ class PointCloudWindow(QWidget):
         self.right_layout.addWidget(cl_box)
         self.right_layout.addWidget(info_box)
         self.right_layout.addWidget(cal_box)
+        self.right_layout.addWidget(fov_box)
         self.right_layout.addStretch(1)
         self.right_layout.addWidget(self.status_lbl)
+
+        self._update_fov()
 
     # ------------- input handlers -------------
 
@@ -357,14 +395,26 @@ class PointCloudWindow(QWidget):
         self.extr.roll_deg = self.roll_spin.value()
         self.extr.pitch_deg = self.pitch_spin.value()
         self.extr.yaw_deg = self.yaw_spin.value()
+        self._update_fov()
         if self.color_combo.currentText() == "thermal":
             self._redraw()
 
     def _on_lens_change(self, name: str) -> None:
         hfov = LENS_PRESETS[name]
         self.intr = intrinsics_from_hfov(self.intr.width, self.intr.height, hfov)
+        self._update_fov()
         if self.color_combo.currentText() == "thermal":
             self._redraw()
+
+    def _update_fov(self) -> None:
+        """Refresh the camera-FOV wireframe (apex at camera origin in lidar coords)."""
+        if not HAS_PG:
+            return
+        if not self.fov_check.isChecked():
+            self.fov_lines.setData(pos=np.zeros((2, 3), dtype=np.float32))
+            return
+        verts = camera_frustum_lines(self.intr, self.extr, self.fov_depth_spin.value())
+        self.fov_lines.setData(pos=verts)
 
     def set_calibration(self, extr: Extrinsics, intr: ThermalIntrinsics) -> None:
         """Apply calibration from outside (e.g. CalibrationWindow). Updates
@@ -380,6 +430,7 @@ class PointCloudWindow(QWidget):
             w.blockSignals(True)
             w.setValue(v)
             w.blockSignals(False)
+        self._update_fov()
         if self.color_combo.currentText() == "thermal":
             self._redraw()
 
@@ -434,8 +485,13 @@ class PointCloudWindow(QWidget):
         if not HAS_PG or self.last_xyz is None:
             return
         colors = self._compute_colors()
+        pos = self.last_xyz
+        if self.fov_crop_check.isChecked():
+            _, in_fov = project_points(self.last_xyz, self.intr, self.extr)
+            pos = pos[in_fov]
+            colors = colors[in_fov]
         self.scatter.setData(
-            pos=self.last_xyz, color=colors, size=float(self.size_spin.value())
+            pos=pos, color=colors, size=float(self.size_spin.value())
         )
         self._draw_boxes()
         # Update pickable centroids
