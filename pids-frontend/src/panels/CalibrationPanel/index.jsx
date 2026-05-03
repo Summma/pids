@@ -65,9 +65,18 @@ export default function CalibrationPanel({
     setCal(activeCalibration)
   }, [activeCalibration])
 
+  // Time-sync to the slowest stream. When the lidar ticks, pull the
+  // camera and thermal frames closest in ts so the three panes show the
+  // same captured moment instead of "latest of each".
+  const lidarTs = lidarData?.meta?.ts ?? 0
+  const cameraSync = cameraData?.frameAt ? cameraData.frameAt(lidarTs) : cameraData?.frame
+  const thermalSync = thermalData?.frameAt ? thermalData.frameAt(lidarTs) : thermalData?.frameRef?.current
+  const cameraSyncSrc = cameraSync?.src ?? ''
+  const cameraSyncTs = cameraSync?.ts ?? 0
+  const thermalSyncTs = thermalSync?.ts ?? 0
+
   useEffect(() => {
-    const src = cameraData?.frame?.src
-    if (!src) {
+    if (!cameraSyncSrc) {
       cameraImageRef.current = null
       return
     }
@@ -76,8 +85,8 @@ export default function CalibrationPanel({
       cameraImageRef.current = img
       setCameraReadySeq(seq => seq + 1)
     }
-    img.src = src
-  }, [cameraData?.frame?.src])
+    img.src = cameraSyncSrc
+  }, [cameraSyncSrc])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -88,13 +97,13 @@ export default function CalibrationPanel({
       thermalCanvasRef,
       cameraImage: cameraImageRef.current,
       lidarFrame: lidarData?.frameRef?.current,
-      thermalFrame: thermalData?.frameRef?.current,
-      cameraFrame: cameraData?.frame,
+      thermalFrame: thermalSync,
+      cameraFrame: cameraSync,
       calibration: cal,
       channel,
     })
     setStats(rendered)
-  }, [cal, channel, lidarData?.meta?.seq, thermalData?.meta?.seq, cameraReadySeq, cameraData?.frame?.seq, lidarData?.frameRef, thermalData?.frameRef])
+  }, [cal, channel, lidarData?.meta?.seq, cameraReadySeq, cameraSyncTs, thermalSyncTs, lidarData?.frameRef])
 
   function commitCalibration(nextCalibration) {
     setCal(nextCalibration)
@@ -166,6 +175,11 @@ export default function CalibrationPanel({
   const cameraState = cameraData?.connState ?? 'connecting'
   const pointText = `${stats.projected.toLocaleString()} / ${stats.points.toLocaleString()} pts`
   const sourceText = cal.source || 'gui_default'
+  const syncCameraMs = lidarTs > 0 && cameraSyncTs > 0 ? Math.round((cameraSyncTs - lidarTs) * 1000) : null
+  const syncThermalMs = lidarTs > 0 && thermalSyncTs > 0 ? Math.round((thermalSyncTs - lidarTs) * 1000) : null
+  const syncText = (syncCameraMs !== null || syncThermalMs !== null)
+    ? `sync Δcam ${formatSync(syncCameraMs)} Δtherm ${formatSync(syncThermalMs)}`
+    : ''
 
   return (
     <div className={styles.overlay}>
@@ -174,6 +188,7 @@ export default function CalibrationPanel({
         <div className={styles.headerRight}>
           <span className={styles.status}>
             Lidar {lidarState} | Thermal {thermalState} | Camera {cameraState} | {pointText}
+            {syncText ? ` | ${syncText}` : ''}
           </span>
           <button className="btn" onClick={onClose}>Close</button>
         </div>
@@ -627,4 +642,10 @@ function degToRad(value) {
 
 function clampByte(value) {
   return Math.max(0, Math.min(255, Math.round(value)))
+}
+
+function formatSync(ms) {
+  if (ms === null) return '—'
+  const sign = ms > 0 ? '+' : ''
+  return `${sign}${ms}ms`
 }

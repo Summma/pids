@@ -56,16 +56,24 @@ export default function App() {
   const lidar   = useLidar(streamConfig)
   const camera  = useCamera(streamConfig)
 
-  const yoloDetections = useMemo(() => synthesizePersonDetections({
-    persons: camera.frame?.persons ?? [],
-    frameW: camera.frame?.frameW ?? 0,
-    frameH: camera.frame?.frameH ?? 0,
-    thermalFrame: thermal.frameRef?.current,
-    thermalMin: thermal.meta?.tMin,
-    thermalMax: thermal.meta?.tMax,
-    thermalCalibration: thermal.meta?.calibration,
-    lidarFrame: lidar.frameRef?.current,
-  }), [
+  // Anchor sensor sync on the slowest stream (lidar): pull camera + thermal
+  // frames whose ts is closest to the lidar's ts so the YOLO bbox, thermal
+  // sample, and 3D lidar position all describe the same captured moment.
+  const yoloDetections = useMemo(() => {
+    const lidarTs = lidar.meta?.ts ?? 0
+    const cameraSync = camera.frameAt ? camera.frameAt(lidarTs) : camera.frame
+    const thermalSync = thermal.frameAt ? thermal.frameAt(lidarTs) : thermal.frameRef?.current
+    return synthesizePersonDetections({
+      persons: cameraSync?.persons ?? [],
+      frameW: cameraSync?.frameW ?? 0,
+      frameH: cameraSync?.frameH ?? 0,
+      thermalFrame: thermalSync,
+      thermalMin: thermal.meta?.tMin,
+      thermalMax: thermal.meta?.tMax,
+      thermalCalibration: thermal.meta?.calibration,
+      lidarFrame: lidar.frameRef?.current,
+    })
+  }, [
     camera.frame?.seq,
     thermal.meta?.seq,
     lidar.meta?.seq,
