@@ -3,43 +3,41 @@ import styles from './RFPanel.module.css'
 
 export default function Spectrum({ fftRef, meta, peaks }) {
   const canvasRef = useRef(null)
-  const rafRef    = useRef(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
+    if (!canvas) return
     const ctx    = canvas.getContext('2d')
 
-    const render = () => {
-      rafRef.current = requestAnimationFrame(render)
-      const w = canvas.offsetWidth
-      const h = canvas.offsetHeight
-      canvas.width  = w
-      canvas.height = h
+    const w = canvas.offsetWidth
+    const h = canvas.offsetHeight
+    canvas.width  = w
+    canvas.height = h
 
-      ctx.fillStyle = '#080c10'
-      ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = '#080c10'
+    ctx.fillRect(0, 0, w, h)
 
-      const { noiseFloor, nFft } = meta
-      if (!nFft) return
+    const { noiseFloor, nFft } = meta
+    if (!nFft) return
 
-      const fft        = fftRef.current
-      const dbMin      = noiseFloor - 10
-      const dbMax      = noiseFloor + 60
-      const dbRange    = dbMax - dbMin
-      const padTop     = 8
-      const padBottom  = 24
-      const plotH      = h - padTop - padBottom
+    const fft        = fftRef.current
+    const dbMin      = noiseFloor - 10
+    const dbMax      = noiseFloor + 60
+    const dbRange    = dbMax - dbMin
+    const padTop     = 8
+    const padBottom  = 24
+    const plotH      = h - padTop - padBottom
 
-      // Noise floor line
-      const nfY = padTop + plotH * (1 - (noiseFloor - dbMin) / dbRange)
-      ctx.strokeStyle = '#3d5a6e'
-      ctx.lineWidth   = 1
-      ctx.setLineDash([4, 4])
-      ctx.beginPath()
-      ctx.moveTo(0, nfY)
-      ctx.lineTo(w, nfY)
-      ctx.stroke()
-      ctx.setLineDash([])
+    // Noise floor line
+    const nfY = padTop + plotH * (1 - (noiseFloor - dbMin) / dbRange)
+    ctx.strokeStyle = '#3d5a6e'
+    ctx.lineWidth   = 1
+    ctx.setLineDash([4, 4])
+    ctx.beginPath()
+    ctx.moveTo(0, nfY)
+    ctx.lineTo(w, nfY)
+    ctx.stroke()
+    ctx.setLineDash([])
 
       // dB axis labels
       ctx.fillStyle = '#3d5a6e'
@@ -116,12 +114,8 @@ export default function Spectrum({ fftRef, meta, peaks }) {
       const centMHz  = (meta.centerFreq / 1e6).toFixed(1)
       ctx.fillText(`${startMHz}`, 2, h - 6)
       ctx.fillText(`${centMHz} MHz`, w / 2 - 25, h - 6)
-      ctx.fillText(`${endMHz}`, w - 35, h - 6)
-    }
-
-    render()
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [fftRef, meta, peaks])
+    ctx.fillText(`${endMHz}`, w - 35, h - 6)
+  }, [fftRef, meta, meta.ts, peaks])
 
   return <canvas ref={canvasRef} className={styles.specCanvas} />
 }

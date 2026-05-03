@@ -16,7 +16,6 @@ export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
   const { frameRef, clusters } = lidarData
   const { threats } = threatData
   const canvasRef = useRef(null)
-  const rafRef = useRef(null)
   const [layer, setLayer] = useState('fusion')
   const [follow, setFollow] = useState(true)
   const [selected, setSelected] = useState(null)
@@ -32,33 +31,28 @@ export default function FusionMapPanel({ fusionData, lidarData, threatData }) {
 
   useEffect(() => {
     const canvas = canvasRef.current
+    if (!canvas) return
     const ctx = canvas.getContext('2d')
 
-    const render = () => {
-      rafRef.current = requestAnimationFrame(render)
-      const rect = canvas.getBoundingClientRect()
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
-      const w = Math.max(1, Math.floor(rect.width * dpr))
-      const h = Math.max(1, Math.floor(rect.height * dpr))
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w
-        canvas.height = h
-      }
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      drawMap(ctx, rect.width, rect.height, {
-        frame,
-        lidarFrame: frameRef.current,
-        clusters,
-        tracks,
-        layer,
-        follow,
-        selected,
-      })
+    const rect = canvas.getBoundingClientRect()
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const w = Math.max(1, Math.floor(rect.width * dpr))
+    const h = Math.max(1, Math.floor(rect.height * dpr))
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
     }
-
-    render()
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [frame, frameRef, clusters, tracks, layer, follow, selected])
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    drawMap(ctx, rect.width, rect.height, {
+      frame,
+      lidarFrame: frameRef.current,
+      clusters,
+      tracks,
+      layer,
+      follow,
+      selected,
+    })
+  }, [frame, frameRef, lidarData.meta.seq, clusters, tracks, layer, follow, selected])
 
   const handleClick = (e) => {
     const canvas = canvasRef.current

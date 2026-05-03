@@ -8,49 +8,42 @@ export default function ThermalPanel({ thermalData }) {
   const { connState, frameRef, meta, sendControl } = thermalData
   const canvasRef  = useRef(null)
   const imgDataRef = useRef(null)
-  const rafRef     = useRef(null)
   const [palette,   setPalette]   = useState('IRONBOW')
   const [recording, setRecording] = useState(false)
   const [crosshair, setCrosshair] = useState(null)   // { x, y, temp }
 
-  // Canvas render loop
+  // Render only when a new backend frame arrives or the palette changes.
   useEffect(() => {
     const canvas = canvasRef.current
+    if (!canvas) return
     const ctx    = canvas.getContext('2d')
+    const frame = frameRef.current
+    if (!frame) return
 
-    const render = () => {
-      rafRef.current = requestAnimationFrame(render)
-      const frame = frameRef.current
-      if (!frame) return
-
-      const { data, w, h } = frame
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width  = w
-        canvas.height = h
-        imgDataRef.current = null
-      }
-
-      if (!imgDataRef.current) {
-        imgDataRef.current = ctx.createImageData(w, h)
-      }
-
-      const lut = PALETTES[palette]
-      const px  = imgDataRef.current.data
-
-      for (let i = 0; i < data.length; i++) {
-        const c = lut[data[i]]
-        px[i * 4]     = c[0]
-        px[i * 4 + 1] = c[1]
-        px[i * 4 + 2] = c[2]
-        px[i * 4 + 3] = 255
-      }
-
-      ctx.putImageData(imgDataRef.current, 0, 0)
+    const { data, w, h } = frame
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width  = w
+      canvas.height = h
+      imgDataRef.current = null
     }
 
-    render()
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [palette, frameRef])
+    if (!imgDataRef.current) {
+      imgDataRef.current = ctx.createImageData(w, h)
+    }
+
+    const lut = PALETTES[palette]
+    const px  = imgDataRef.current.data
+
+    for (let i = 0; i < data.length; i++) {
+      const c = lut[data[i]]
+      px[i * 4]     = c[0]
+      px[i * 4 + 1] = c[1]
+      px[i * 4 + 2] = c[2]
+      px[i * 4 + 3] = 255
+    }
+
+    ctx.putImageData(imgDataRef.current, 0, 0)
+  }, [palette, frameRef, meta.seq])
 
   const onMouseMove = useCallback((e) => {
     const canvas = canvasRef.current

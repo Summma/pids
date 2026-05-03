@@ -6,59 +6,53 @@ const WATERFALL_ROWS = 120
 export default function Waterfall({ fftRef, meta }) {
   const canvasRef  = useRef(null)
   const bufferRef  = useRef([])   // ring buffer of rows
-  const rafRef     = useRef(null)
   const lastNFft   = useRef(0)
 
   useEffect(() => {
     const canvas = canvasRef.current
+    if (!canvas) return
     const ctx    = canvas.getContext('2d')
 
-    const render = () => {
-      rafRef.current = requestAnimationFrame(render)
-      const w = canvas.offsetWidth
-      const h = canvas.offsetHeight
-      canvas.width  = w
-      canvas.height = h
+    const w = canvas.offsetWidth
+    const h = canvas.offsetHeight
+    canvas.width  = w
+    canvas.height = h
 
-      const { nFft, noiseFloor } = meta
-      if (!nFft) return
+    const { nFft, noiseFloor } = meta
+    if (!nFft) return
 
-      const fft    = fftRef.current
-      const dbMin  = noiseFloor - 5
-      const dbMax  = noiseFloor + 55
+    const fft    = fftRef.current
+    const dbMin  = noiseFloor - 5
+    const dbMax  = noiseFloor + 55
 
-      // Append new row
-      if (nFft !== lastNFft.current) {
-        bufferRef.current = []
-        lastNFft.current  = nFft
-      }
-
-      const row = new Float32Array(nFft)
-      for (let i = 0; i < nFft; i++) row[i] = fft[i]
-      bufferRef.current.push(row)
-      if (bufferRef.current.length > WATERFALL_ROWS) bufferRef.current.shift()
-
-      const rowH  = h / WATERFALL_ROWS
-      const buf   = bufferRef.current
-      const start = Math.max(0, WATERFALL_ROWS - buf.length)
-
-      for (let r = 0; r < buf.length; r++) {
-        const rowData = buf[buf.length - 1 - r]
-        const y       = (start + r) * rowH
-
-        for (let i = 0; i < nFft; i++) {
-          const x  = (i / nFft) * w
-          const bw = Math.max(1, w / nFft)
-          const u  = Math.max(0, Math.min(1, (rowData[i] - dbMin) / (dbMax - dbMin)))
-          ctx.fillStyle = waterfallColor(u)
-          ctx.fillRect(x, y, bw + 0.5, rowH + 0.5)
-        }
-      }
+    // Append one row per backend FFT frame.
+    if (nFft !== lastNFft.current) {
+      bufferRef.current = []
+      lastNFft.current  = nFft
     }
 
-    render()
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [fftRef, meta])
+    const row = new Float32Array(nFft)
+    for (let i = 0; i < nFft; i++) row[i] = fft[i]
+    bufferRef.current.push(row)
+    if (bufferRef.current.length > WATERFALL_ROWS) bufferRef.current.shift()
+
+    const rowH  = h / WATERFALL_ROWS
+    const buf   = bufferRef.current
+    const start = Math.max(0, WATERFALL_ROWS - buf.length)
+
+    for (let r = 0; r < buf.length; r++) {
+      const rowData = buf[buf.length - 1 - r]
+      const y       = (start + r) * rowH
+
+      for (let i = 0; i < nFft; i++) {
+        const x  = (i / nFft) * w
+        const bw = Math.max(1, w / nFft)
+        const u  = Math.max(0, Math.min(1, (rowData[i] - dbMin) / (dbMax - dbMin)))
+        ctx.fillStyle = waterfallColor(u)
+        ctx.fillRect(x, y, bw + 0.5, rowH + 0.5)
+      }
+    }
+  }, [fftRef, meta, meta.ts])
 
   return <canvas ref={canvasRef} className={styles.waterfallCanvas} />
 }
