@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useWebSocket } from './useWebSocket'
-import { wsUrl, WS_PATHS } from '@/utils/wsConfig'
+import { wsUrl, WS_PATHS, DETECTION_MODE } from '@/utils/wsConfig'
 
 const MAX_PTS   = 131072
 const HEADER_BYTES = 24
@@ -9,7 +9,7 @@ const intBuf    = new Float32Array(MAX_PTS)
 const rawBuf    = new Uint8Array(MAX_PTS * 16)
 
 export function useLidar() {
-  const { connState, setOnMessage, send } = useWebSocket(wsUrl(WS_PATHS.lidar), { binaryType: 'arraybuffer' })
+  const { connState, setOnMessage, send } = useWebSocket(wsUrl(WS_PATHS.lidar, { mode: DETECTION_MODE }), { binaryType: 'arraybuffer' })
   const frameRef = useRef({ positions: posBuf, intensities: intBuf, n: 0 })
   const [meta, setMeta] = useState({ n: 0, seq: 0, ts: 0 })
   const [clusters, setClusters] = useState([])

@@ -70,6 +70,13 @@ ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_GEMINI_IMAGE_BYTES = 6 * 1024 * 1024
 MAX_GEMINI_IMAGES = 4
 DATA_URL_RE = re.compile(r"^data:(?P<mime>[-\w.+/]+);base64,(?P<data>.*)$", re.S)
+DETECTION_MODES = ("off", "indoor_human", "pointpillars", "auto")
+DETECTION_MODE_LABELS = {
+    "off": "Off",
+    "indoor_human": "Indoor ROI",
+    "pointpillars": "PointPillars",
+    "auto": "Auto fusion",
+}
 
 SCENE_ANALYST_INSTRUCTION = """You are Narya's scene analyst. Use the current lidar/thermal 3D render, visible camera frame, and structured detector metadata to answer the operator's question.
 
@@ -395,7 +402,7 @@ class DetectionEngine:
             self._configure_indoor_human()
         if mode in ("pointpillars", "auto"):
             self._configure_pointpillars(pointpillars_endpoint, pointpillars_timeout_ms, pointpillars_max_points)
-        if mode not in ("off", "", "indoor_human", "pointpillars", "auto"):
+        if mode not in DETECTION_MODES and mode != "":
             self._load_error = f"unknown detection mode: {mode}"
 
     def maybe_process(
@@ -499,6 +506,7 @@ class DetectionEngine:
         try:
             vals = intensities if intensities is not None else np.zeros(len(points), dtype=np.float32)
             raw, _elapsed_ms, status = self._pointpillars.infer(points, vals)
+            self._pointpillars_error = ""
             tracked = self._pointpillars_tracker.update(raw, dt)
             return tracked, f"{status} -> {len(tracked)} confirmed"
         except Exception as exc:
@@ -515,6 +523,35 @@ class DetectionEngine:
             "debug_count": 0,
             "ts": time.time(),
         }
+
+    def close(self) -> None:
+        if self._pointpillars is not None:
+            self._pointpillars.close()
+
+
+def normalize_detection_mode(mode: Optional[str], default: str = "auto") -> str:
+    value = (mode or "").strip()
+    if value in DETECTION_MODES:
+        return value
+    return default if default in DETECTION_MODES else "auto"
+
+
+def get_detection_engine(app: web.Application, mode: Optional[str] = None) -> DetectionEngine:
+    default_mode = normalize_detection_mode(app.get("detection_engine_default_mode", "auto"))
+    selected_mode = normalize_detection_mode(mode, default_mode)
+    engines: Dict[str, DetectionEngine] = app["detection_engines"]
+    engine = engines.get(selected_mode)
+    if engine is None:
+        config = app["detection_engine_config"]
+        engine = DetectionEngine(
+            mode=selected_mode,
+            fps=config["fps"],
+            pointpillars_endpoint=config["pointpillars_endpoint"],
+            pointpillars_timeout_ms=config["pointpillars_timeout_ms"],
+            pointpillars_max_points=config["pointpillars_max_points"],
+        )
+        engines[selected_mode] = engine
+    return engine
 
 
 class GeminiSceneClient:
@@ -1619,7 +1656,7 @@ async def thermal_ws(request: web.Request) -> web.WebSocketResponse:
 
 async def lidar_ws(request: web.Request) -> web.WebSocketResponse:
     lidar: LidarStreamer = request.app["lidar_streamer"]
-    detector: DetectionEngine = request.app["detection_engine"]
+    detector = get_detection_engine(request.app, request.query.get("mode"))
     thermal: ThermalCamera = request.app["thermal_camera"]
     ws = web.WebSocketResponse(heartbeat=15)
     await ws.prepare(request)
@@ -1701,9 +1738,12 @@ async def health(request: web.Request) -> web.Response:
     thermal: ThermalCamera = request.app["thermal_camera"]
     lidar: LidarStreamer = request.app["lidar_streamer"]
     camera: CameraStreamer = request.app["camera_streamer"]
-    detector: DetectionEngine = request.app["detection_engine"]
+    detector = get_detection_engine(request.app)
     gemini: GeminiSceneClient = request.app["gemini_client"]
     static_dir: Optional[Path] = request.app.get("static_dir")
+    engines: Dict[str, DetectionEngine] = request.app.get("detection_engines", {})
+    detector_config: dict = request.app.get("detection_engine_config", {})
+    pp_endpoint = str(detector_config.get("pointpillars_endpoint", ""))
     return web.json_response(
         {
             "ok": True,
@@ -1718,8 +1758,13 @@ async def health(request: web.Request) -> web.Response:
             "camera_configured": camera.device is not None,
             "camera_device": camera.device,
             "detection_mode": detector.mode,
-            "pointpillars_configured": bool(detector._pointpillars and detector._pointpillars.endpoint),
-            "pointpillars_endpoint": detector._pointpillars.endpoint if detector._pointpillars else "",
+            "detection_modes": [
+                {"value": mode, "label": DETECTION_MODE_LABELS[mode]}
+                for mode in DETECTION_MODES
+            ],
+            "active_detection_modes": sorted(engines.keys()),
+            "pointpillars_configured": bool(pp_endpoint),
+            "pointpillars_endpoint": pp_endpoint,
             "pointpillars_available": bool(detector._pointpillars and detector._pointpillars.available),
             "pointpillars_error": detector._pointpillars_error,
             "gemini_model": gemini.model,
@@ -1785,13 +1830,15 @@ def build_app(
         height=camera_height,
         jpeg_quality=camera_jpeg_quality,
     )
-    app["detection_engine"] = DetectionEngine(
-        mode=detection_mode,
-        fps=detection_fps,
-        pointpillars_endpoint=pointpillars_endpoint,
-        pointpillars_timeout_ms=pointpillars_timeout_ms,
-        pointpillars_max_points=pointpillars_max_points,
-    )
+    app["detection_engine_default_mode"] = normalize_detection_mode(detection_mode, "indoor_human")
+    app["detection_engine_config"] = {
+        "fps": detection_fps,
+        "pointpillars_endpoint": pointpillars_endpoint,
+        "pointpillars_timeout_ms": pointpillars_timeout_ms,
+        "pointpillars_max_points": pointpillars_max_points,
+    }
+    app["detection_engines"] = {}
+    app["detection_engine"] = get_detection_engine(app)
     app["gemini_client"] = GeminiSceneClient(
         model=gemini_model,
         project=gemini_project,
@@ -1832,7 +1879,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-width", type=int, default=1280)
     parser.add_argument("--camera-height", type=int, default=720)
     parser.add_argument("--camera-jpeg-quality", type=int, default=75)
-    parser.add_argument("--detection-mode", default="indoor_human", choices=["off", "indoor_human", "pointpillars", "auto"])
+    parser.add_argument("--detection-mode", default="indoor_human", choices=DETECTION_MODES)
     parser.add_argument("--detection-fps", type=float, default=2.0)
     parser.add_argument("--pointpillars-endpoint", default=os.getenv("PIDS_POINTPILLARS_ENDPOINT", ""))
     parser.add_argument("--pointpillars-timeout-ms", type=int, default=int(os.getenv("PIDS_POINTPILLARS_TIMEOUT_MS", "250")))
@@ -1878,16 +1925,15 @@ def main() -> None:
         camera: ThermalCamera = app["thermal_camera"]
         lidar: LidarStreamer = app["lidar_streamer"]
         visible_camera: CameraStreamer = app["camera_streamer"]
-        detector: DetectionEngine = app["detection_engine"]
         camera.close()
         lidar.close()
         visible_camera.close()
-        if detector._pointpillars is not None:
-            detector._pointpillars.close()
+        for detector in app.get("detection_engines", {}).values():
+            detector.close()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
-    web.run_app(app, host=args.host, port=args.port)
+    web.run_app(app, host=args.host, port=args.port, shutdown_timeout=2.0)
 
 
 if __name__ == "__main__":

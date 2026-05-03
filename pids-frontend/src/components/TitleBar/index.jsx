@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { saveConfig, HOST, PORT } from '@/utils/wsConfig'
+import { saveConfig, HOST, PORT, DETECTION_MODE, DETECTION_MODE_OPTIONS } from '@/utils/wsConfig'
 import styles from './TitleBar.module.css'
 
 export default function TitleBar({
@@ -11,6 +11,7 @@ export default function TitleBar({
   const [showSettings, setShowSettings] = useState(false)
   const [host, setHost] = useState(HOST)
   const [port, setPort] = useState(PORT)
+  const [detectionMode, setDetectionMode] = useState(DETECTION_MODE)
 
   const goHome = () => {
     setShowSettings(false)
@@ -23,7 +24,7 @@ export default function TitleBar({
   }
 
   const applySettings = () => {
-    saveConfig(host, Number(port))
+    saveConfig(host, Number(port), detectionMode)
     setShowSettings(false)
     window.location.reload()
   }
@@ -86,6 +87,22 @@ export default function TitleBar({
               placeholder="9090"
               style={{ width: 70 }}
             />
+          </div>
+          <div className={styles.settingsTitle}>Detector</div>
+          <div className={styles.settingsRow}>
+            <label className={styles.settingsLabel}>Model</label>
+            <select
+              className={styles.settingsSelect}
+              value={detectionMode}
+              onChange={e => setDetectionMode(e.target.value)}
+              title={DETECTION_MODE_OPTIONS.find(option => option.value === detectionMode)?.title}
+            >
+              {DETECTION_MODE_OPTIONS.map(option => (
+                <option key={option.value} value={option.value} title={option.title}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
           <button className={styles.settingsApply} onClick={applySettings}>
             Apply and reconnect
